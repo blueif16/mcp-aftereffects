@@ -489,6 +489,50 @@ export async function dismissAeDialog(
   }
 }
 
+// Layer-menu commands (Layer > Layer Styles > ...) are only enabled while the
+// After Effects window has the foreground; run from a background process they
+// silently do nothing. Windows refuses SetForegroundWindow to a process that
+// does not own the foreground unless an input event just happened, hence the
+// synthetic ALT tap. A minimized window is restored; a maximized one is left as is.
+const FOCUS_SCRIPT = String.raw`
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public class AeMcpFocus {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
+}
+'@
+$p = Get-Process AfterFX -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+if (-not $p) { 'false'; exit }
+if ([AeMcpFocus]::IsIconic($p.MainWindowHandle)) { [void][AeMcpFocus]::ShowWindow($p.MainWindowHandle, 9) }
+[AeMcpFocus]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+[AeMcpFocus]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+if ([AeMcpFocus]::SetForegroundWindow($p.MainWindowHandle)) { 'true' } else { 'false' }
+`;
+
+const DARWIN_FOCUS_SCRIPT = String.raw`
+var se = Application('System Events');
+var procs = se.processes.whose({ name: { _beginsWith: 'After Effects' } })();
+if (procs.length) { procs[0].frontmost = true; 'true'; } else 'false';
+`;
+
+/**
+ * Bring After Effects to the foreground so menu commands run by
+ * app.executeCommand are enabled. Best-effort: resolves false when it could
+ * not (no window, unsupported platform, script failure).
+ */
+export async function focusAfterEffects(platform: NodeJS.Platform = process.platform): Promise<boolean> {
+  try {
+    if (platform === "win32") return (await runner(FOCUS_SCRIPT, {})).trim().endsWith("true");
+    if (platform === "darwin") return (await osascriptRunner(DARWIN_FOCUS_SCRIPT, {})).trim() === "true";
+  } catch {
+    /* fall through */
+  }
+  return false;
+}
+
 /** One line per dialog, for error messages. */
 export function describeDialogs(dialogs: AeDialog[]): string {
   return dialogs

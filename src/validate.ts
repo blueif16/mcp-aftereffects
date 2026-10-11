@@ -108,6 +108,7 @@ export function validateAeProjectDoc(doc: unknown): ValidationResult {
       if (typeof item.height !== "number") v.err(`${base}.height`, "missing or not a number");
       if (typeof item.duration !== "number") v.err(`${base}.duration`, "missing or not a number");
       if (typeof item.frameRate !== "number") v.err(`${base}.frameRate`, "missing or not a number");
+      if (item.proxy !== undefined) validateProxy(v, `${base}.proxy`, item.proxy);
       if (Array.isArray(item.layers)) {
         for (let li = 0; li < item.layers.length; li++) {
           validateLayer(v, `${base}.layers[${li}]`, item.layers[li]);
@@ -122,14 +123,20 @@ export function validateAeProjectDoc(doc: unknown): ValidationResult {
       } else if (item.sourceKind === "file") {
         if (item.file !== null && typeof item.file !== "string")
           v.err(`${base}.file`, "file must be string or null");
+      } else if (item.sourceKind === "placeholder") {
+        if (typeof item.width !== "number" || typeof item.height !== "number")
+          v.err(`${base}`, "placeholder requires width and height");
       }
+      validateFootageSource(v, base, item);
+      if (item.proxy !== undefined) validateProxy(v, `${base}.proxy`, item.proxy);
     }
   }
 
   // Second pass: validate parentFolderId cross-references
   for (let i = 0; i < d.items.length; i++) {
     const item = d.items[i];
-    if (item && typeof item.parentFolderId === "number") {
+    // The root folder (id 0) is never exported as an item.
+    if (item && typeof item.parentFolderId === "number" && item.parentFolderId !== 0) {
       if (!seenIds.has(item.parentFolderId)) {
         v.warn(`items[${i}].parentFolderId`, `parent id ${item.parentFolderId} not in items list`);
       } else if (!folderIds.has(item.parentFolderId)) {
@@ -225,4 +232,63 @@ function validateKeyframe(v: Validator, path: string, kf: KeyframeSpec): void {
     return;
   }
   if (typeof kf.time !== "number") v.err(`${path}.time`, "missing or not a number");
+}
+
+const SOURCE_KINDS = new Set(["solid", "file", "placeholder", "unknown"]);
+const INTERP_NUMBERS = ["alphaMode", "fieldSeparationType", "removePulldown", "conformFrameRate"];
+const INTERP_BOOLEANS = ["invertAlpha", "highQualityFieldSeparation", "loop"];
+
+/** v4 source fields shared by footage items and proxies: sequence + interpretation. */
+function validateFootageSource(v: Validator, base: string, src: Record<string, unknown>): void {
+  if (src.sequence !== undefined) {
+    const seq = src.sequence;
+    if (!v.isObject(seq)) {
+      v.err(`${base}.sequence`, "must be an object");
+    } else {
+      for (const k of ["start", "end", "digits"]) {
+        if (seq[k] !== undefined && (typeof seq[k] !== "number" || !Number.isInteger(seq[k])))
+          v.err(`${base}.sequence.${k}`, "must be an integer");
+      }
+      if (typeof seq.start === "number" && typeof seq.end === "number" && seq.end < seq.start)
+        v.err(`${base}.sequence`, `end ${seq.end} is before start ${seq.start}`);
+      if (seq.end !== undefined && seq.start === undefined)
+        v.err(`${base}.sequence.start`, "required when end is set");
+      if (src.sourceKind !== "file") v.warn(`${base}.sequence`, "only file sources can be sequences; ignored");
+    }
+  }
+  if (src.interpretation !== undefined) {
+    const it = src.interpretation;
+    if (!v.isObject(it)) {
+      v.err(`${base}.interpretation`, "must be an object");
+      return;
+    }
+    for (const k of INTERP_NUMBERS) {
+      // Enum fields may also be given by name ("STRAIGHT", "UPPER_FIELD_FIRST", "OFF").
+      const named = k !== "conformFrameRate" && typeof it[k] === "string" && /^[A-Z0-9_]+$/i.test(it[k] as string);
+      if (it[k] !== undefined && typeof it[k] !== "number" && !named)
+        v.err(`${base}.interpretation.${k}`, k === "conformFrameRate" ? "must be a number" : "must be an enum number or name");
+    }
+    for (const k of INTERP_BOOLEANS) {
+      // `loop` is a count in AE (1 = play once); older docs may carry a boolean.
+      if (k === "loop" && typeof it[k] === "number") continue;
+      if (it[k] !== undefined && typeof it[k] !== "boolean") v.err(`${base}.interpretation.${k}`, "must be a boolean");
+    }
+    const c = it.conformFrameRate;
+    if (typeof c === "number" && (c < 0 || c > 999)) v.err(`${base}.interpretation.conformFrameRate`, "out of range");
+    const pm = it.premulColor;
+    if (pm !== undefined && (!Array.isArray(pm) || pm.length !== 3 || pm.some((x) => typeof x !== "number")))
+      v.err(`${base}.interpretation.premulColor`, "must be [r,g,b]");
+  }
+}
+
+function validateProxy(v: Validator, base: string, proxy: unknown): void {
+  if (!v.isObject(proxy)) {
+    v.err(base, "must be an object");
+    return;
+  }
+  if (typeof proxy.sourceKind !== "string" || !SOURCE_KINDS.has(proxy.sourceKind))
+    v.err(`${base}.sourceKind`, "must be solid, file, placeholder or unknown");
+  if (typeof proxy.useProxy !== "boolean") v.err(`${base}.useProxy`, "missing or not a boolean");
+  if (proxy.sourceKind === "file" && typeof proxy.file !== "string") v.err(`${base}.file`, "file proxy requires a path");
+  validateFootageSource(v, base, proxy);
 }

@@ -2,9 +2,13 @@
 // document describing folders, comps (with full layer/property trees), solid
 // footage, and file footage references. ES3-compatible.
 
-AE.EXPORT_SCHEMA_VERSION = 2;
+AE.EXPORT_SCHEMA_VERSION = 4;
 // v1: basic items + layers + transform/effects/masks/text
 // v2: shape layer contents, layer/comp markers, time remap, material options, audio, extended text document fields
+// v3: layer attrs (blend, matte, adjustment, null, quality, motion blur...), comp attrs, group enabled + mask
+//     attrs, disabled expressions, separated dimensions, spatial/continuity key data, camera/light/style groups
+// v4: footage interpretation, image sequences with frame range, placeholders, proxies (footage + comps),
+//     footage frameRate/pixelAspect, project settings (color management, time display, expressions)
 
 AE.exportProject = function () {
     var proj = app.project;
@@ -15,7 +19,8 @@ AE.exportProject = function () {
         project: {
             file: proj.file ? proj.file.fsName.replace(/\\/g, "/") : null,
             bitsPerChannel: proj.bitsPerChannel,
-            timeDisplayType: String(proj.timeDisplayType)
+            timeDisplayType: String(proj.timeDisplayType),
+            settings: AE._readAttrs(proj, AE.PROJECT_ATTRS, {})
         },
         items: []
     };
@@ -31,6 +36,7 @@ AE.exportProject = function () {
             entry.shutterPhase = it.shutterPhase;
             entry.motionBlur = it.motionBlur;
             entry.displayStartTime = it.displayStartTime;
+            entry.attrs = AE.serializeCompAttrs(it);
             entry.layers = [];
             for (var li = 1; li <= it.numLayers; li++) {
                 var lay = it.layer(li);
@@ -39,14 +45,23 @@ AE.exportProject = function () {
             entry.markers = AE.serializeCompMarkers(it);
         }
         if (it instanceof FootageItem) {
-            // width/height/duration already in summary; nothing extra needed for solids.
             var src = it.mainSource;
+            entry.frameRate = it.frameRate;
+            entry.pixelAspect = it.pixelAspect;
+            entry.hasVideo = it.hasVideo;
+            entry.hasAudio = it.hasAudio;
+            entry.footageMissing = AE.safeGet(function () { return it.footageMissing; }, false);
+            var fs = AE.serializeFootageSource(src, AE.sourceFrameCount(it));
+            for (var fk in fs) if (fs.hasOwnProperty(fk)) entry[fk] = fs[fk];
             if (src instanceof SolidSource) {
                 entry.sourceWidth = it.width;
                 entry.sourceHeight = it.height;
                 entry.alphaMode = src.alphaMode;
-                try { entry.hasAlpha = src.hasAlpha; } catch (e) {}
             }
+        }
+        if (it instanceof CompItem || it instanceof FootageItem) {
+            var px = AE.serializeProxy(it);
+            if (px) entry.proxy = px;
         }
         doc.items.push(entry);
     }

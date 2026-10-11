@@ -501,7 +501,7 @@ AE.valueToJson = function (val, _depth) {
     // TextDocument special-case — check before generic array-like because
     // TextDocument does not expose a length property.
     if (val.text !== undefined && typeof val.text === "string" && val.fontSize !== undefined) {
-        return {
+        var td = {
             __kind: "TextDocument",
             text: val.text,
             font: AE.safeGet(function () { return val.font; }, null),
@@ -521,6 +521,11 @@ AE.valueToJson = function (val, _depth) {
             boxTextSize: AE.safeGet(function () { return val.boxText && val.boxTextSize ? [val.boxTextSize[0], val.boxTextSize[1]] : null; }, null),
             boxTextPos: AE.safeGet(function () { return val.boxText && val.boxTextPos ? [val.boxTextPos[0], val.boxTextPos[1]] : null; }, null)
         };
+        // Character/paragraph styling. justification was a String(enum) in
+        // v2 and never re-applied; it is now the enum number.
+        td.justification = AE.safeGet(function () { return val.justification; }, null);
+        AE._readAttrs(val, AE.TEXT_DOC_ATTRS, td);
+        return td;
     }
     // Shape object (masks / shape layer paths)
     if (val.vertices !== undefined) {
@@ -588,13 +593,34 @@ AE.serializeProperty = function (prop) {
     if (prop.propertyValueType === PropertyValueType.NO_VALUE) {
         return out;
     }
+    // CUSTOM_VALUE (Curves curve, Levels histogram, ...) cannot be read or
+    // written by scripting at all; flag it so importers can say what is lost.
+    if (prop.propertyValueType === PropertyValueType.CUSTOM_VALUE) {
+        out.value = null;
+        out.unscriptable = true;
+        return out;
+    }
     try {
         out.value = AE.valueToJson(prop.value);
     } catch (e) {
         out.value = null;
     }
-    if (prop.canSetExpression && prop.expressionEnabled && prop.expression && prop.expression.length > 0) {
+    // Disabled expressions are kept too (a switched-off rig is still part of
+    // the template); expressionEnabled says which. Absent flag = enabled, so
+    // v2 documents keep their meaning.
+    if (prop.canSetExpression && prop.expression && prop.expression.length > 0) {
         out.expression = prop.expression;
+        if (!prop.expressionEnabled) out.expressionEnabled = false;
+    }
+    // Separate Dimensions lives on the leader (Position); the X/Y/Z followers
+    // carry the values and keys once it is on.
+    var separatedLeader = false;
+    try { separatedLeader = !!(prop.isSeparationLeader && prop.dimensionsSeparated); } catch (eDs) {}
+    if (separatedLeader) {
+        // The hidden leader can carry keys that merely mirror its followers
+        // (seen after imports); they are derived, so they are not exported.
+        out.dimensionsSeparated = true;
+        return out;
     }
     if (prop.numKeys && prop.numKeys > 0) {
         var keys = [];
@@ -620,11 +646,34 @@ AE.serializeProperty = function (prop) {
                     entry.outEase = AE._serializeEase(prop.keyOutTemporalEase(k));
                 }
             } catch (eEz) { /* pre-ease host or non-temporal property */ }
+            AE._serializeKeyExtras(prop, k, entry);
             keys.push(entry);
         }
         out.keyframes = keys;
     }
     return out;
+};
+
+// Keyframe attributes beyond value/interp/ease: continuity, auto-bezier,
+// spatial tangents, roving, label. Only non-default values are written so a
+// plain linear key stays small. Spatial tangents are written whenever the
+// key is not auto-bezier, since then the handles are user data.
+AE._serializeKeyExtras = function (prop, k, entry) {
+    try { if (prop.keyTemporalContinuous(k)) entry.temporalContinuous = true; } catch (e1) {}
+    try { if (prop.keyTemporalAutoBezier(k)) entry.temporalAutoBezier = true; } catch (e2) {}
+    try {
+        if (prop.isSpatial) {
+            var autoB = prop.keySpatialAutoBezier(k);
+            if (autoB) entry.spatialAutoBezier = true;
+            if (prop.keySpatialContinuous(k)) entry.spatialContinuous = true;
+            if (!autoB) {
+                entry.inSpatialTangent = AE.valueToJson(prop.keyInSpatialTangent(k));
+                entry.outSpatialTangent = AE.valueToJson(prop.keyOutSpatialTangent(k));
+            }
+            if (prop.keyRoving(k)) entry.roving = true;
+        }
+    } catch (e3) {}
+    try { var lbl = prop.keyLabel(k); if (lbl) entry.label = lbl; } catch (e4) { /* keyLabel is AE 22.6+ */ }
 };
 
 /** KeyframeEase[] → [{speed, influence}, ...] (one per eased dimension). */
@@ -660,19 +709,131 @@ AE.serializePropertyGroup = function (group, depth, maxDepth, opts) {
         properties: [],
         groups: []
     };
-    if (depth >= maxDepth) return out;
+    // The eyeball on effects, shape groups, text animators, layer styles.
+    try { if (group.canSetEnabled) out.enabled = group.enabled; } catch (eEn) {}
+    // Mask mode/invert/etc. are attributes of the mask group, not properties.
+    try { if (group.isMask) out.mask = AE.serializeMaskAttrs(group); } catch (eMa) {}
+    if (depth >= maxDepth) {
+        // Say so instead of silently dropping the subtree.
+        try { if (group.numProperties > 0) out.truncated = true; } catch (eTr) {}
+        return out;
+    }
     for (var i = 1; i <= group.numProperties; i++) {
         var child;
         try { child = group.property(i); } catch (e) { continue; }
         if (!child) continue;
         if (child.propertyType === PropertyType.PROPERTY) {
             if (opts && opts.onlyModified && !AE._propertyMatters(child)) continue;
+            // A text animator's Properties group lists all ~100 animatable
+            // properties; the ones not added are placeholders that cannot
+            // take an expression (and ignore setValue).
+            if (group.matchName === "ADBE Text Animator Properties" && !AE.safeGet(function () { return child.canSetExpression; }, true)) continue;
             out.properties.push(AE.serializeProperty(child));
         } else if (child.propertyType === PropertyType.NAMED_GROUP || child.propertyType === PropertyType.INDEXED_GROUP) {
             out.groups.push(AE.serializePropertyGroup(child, depth + 1, maxDepth, opts));
         }
     }
     return out;
+};
+
+AE.serializeMaskAttrs = function (mask) {
+    var m = {};
+    try { m.mode = mask.maskMode; } catch (e1) {}
+    try { m.inverted = mask.inverted; } catch (e2) {}
+    try { m.rotoBezier = mask.rotoBezier; } catch (e3) {}
+    try { m.motionBlur = mask.maskMotionBlur; } catch (e4) {}
+    try { m.featherFalloff = mask.maskFeatherFalloff; } catch (e5) {}
+    try { m.locked = mask.locked; } catch (e6) {}
+    try { m.color = [mask.color[0], mask.color[1], mask.color[2]]; } catch (e7) {}
+    return m;
+};
+
+// ---------- Layer / comp attributes ----------
+// Switches and settings that are attributes of the Layer/CompItem objects
+// rather than properties in the tree, so a property walk never sees them.
+// Read with guards: each list mixes attributes from different AE versions
+// and layer classes, and a missing one is skipped.
+AE.LAYER_ATTRS = ["comment", "autoOrient"];
+AE.AVLAYER_ATTRS = ["adjustmentLayer", "guideLayer", "blendingMode", "motionBlur", "quality",
+    "samplingQuality", "collapseTransformation", "frameBlendingType", "effectsActive",
+    "preserveTransparency", "environmentLayer", "audioEnabled", "trackMatteType"];
+// TextDocument fields beyond the core set in valueToJson. Order matters on
+// import: autoLeading must be off before leading takes.
+AE.TEXT_DOC_ATTRS = ["allCaps", "smallCaps", "fauxBold", "fauxItalic", "superscript", "subscript",
+    "horizontalScale", "verticalScale", "tsume", "fontCapsOption", "fontBaselineOption",
+    "autoKernType", "ligature", "strokeOverFill", "lineJoinType", "autoLeading",
+    "firstLineIndent", "startIndent", "endIndent", "spaceBefore", "spaceAfter",
+    "everyLineComposer", "hangingRoman", "direction", "baselineDirection"];
+AE.COMP_ATTRS = ["frameBlending", "renderer", "resolutionFactor", "preserveNestedFrameRate",
+    "preserveNestedResolution", "hideShyLayers", "draft3D", "motionBlurSamplesPerFrame",
+    "motionBlurAdaptiveSampleLimit", "dropFrame"];
+
+AE._readAttrs = function (obj, names, out) {
+    for (var i = 0; i < names.length; i++) {
+        var n = names[i];
+        try {
+            var v = obj[n];
+            if (v === undefined || typeof v === "function") continue;
+            out[n] = AE.valueToJson(v);
+        } catch (e) { /* attribute absent on this AE version / layer class */ }
+    }
+    return out;
+};
+
+AE.serializeLayerAttrs = function (layer) {
+    var a = AE._readAttrs(layer, AE.LAYER_ATTRS, {});
+    try { a.nullLayer = layer.nullLayer; } catch (eNl) {}
+    if (layer instanceof AVLayer) {
+        AE._readAttrs(layer, AE.AVLAYER_ATTRS, a);
+        // AE 23+: the matte is any layer, not just the one above.
+        try {
+            var tm = layer.trackMatteLayer;
+            if (tm) a.trackMatteLayerIndex = tm.index;
+        } catch (eTm) {}
+    }
+    if (layer instanceof TextLayer) {
+        try { a.threeDPerChar = layer.threeDPerChar; } catch (e3c) {}
+    }
+    if (layer instanceof LightLayer) {
+        try { a.lightType = layer.lightType; } catch (eLt) {}
+    }
+    return a;
+};
+
+AE.serializeCompAttrs = function (comp) {
+    return AE._readAttrs(comp, AE.COMP_ATTRS, {});
+};
+
+// Top-level layer groups outside Transform/Effects/Masks/Text/Contents that
+// hold real data. Layer Styles only counts once a style has been added.
+AE.EXTRA_LAYER_GROUPS = ["ADBE Camera Options Group", "ADBE Light Options Group",
+    "ADBE Extrsn Options Group", "ADBE Plane Options Group", "ADBE Layer Styles"];
+
+/**
+ * Every style group (dropShadow/enabled, frameFX/enabled, ...) always exists
+ * under Layer Styles; an added style is the one whose eyeball can be set.
+ */
+AE.layerHasStyles = function (grp) {
+    try { return grp.canSetEnabled === true; } catch (e) { return false; }
+};
+
+/** Drop the style groups that were never added (they only carry defaults). */
+AE.pruneLayerStyles = function (gs) {
+    var kept = [];
+    for (var i = 0; i < gs.groups.length; i++) {
+        var g = gs.groups[i];
+        if (g.matchName === "ADBE Blend Options Group" || g.enabled !== undefined) kept.push(g);
+    }
+    gs.groups = kept;
+    return gs;
+};
+
+// Layer styles cannot be added with addProperty; these menu command ids
+// (stable across UI languages) add one to the selected layer.
+AE.LAYER_STYLE_COMMANDS = {
+    "dropShadow/enabled": 9000, "innerShadow/enabled": 9001, "outerGlow/enabled": 9002,
+    "innerGlow/enabled": 9003, "bevelEmboss/enabled": 9004, "chromeFX/enabled": 9005,
+    "solidFill/enabled": 9006, "gradientFill/enabled": 9007, "frameFX/enabled": 9008
 };
 
 /** True when a leaf property carries information: modified, keyed, or expressed. */
@@ -710,40 +871,42 @@ AE.serializeLayerFull = function (layer, opts) {
     var out = AE.serializeLayerSummary(layer);
     // Parent by index for simple remapping on import.
     out.parent = layer.parent ? { index: layer.parent.index, name: layer.parent.name } : null;
+    out.attrs = AE.serializeLayerAttrs(layer);
     var summary = opts.detail === "summary";
     var walkOpts = summary ? { onlyModified: true } : null;
     function collapse(g) { return (summary && AE.propertyGroupIsEmpty(g)) ? null : g; }
     // Property tree (Transform + Effects + Masks + Text + Contents + Material Options + Audio)
     if (opts.includeProperties !== false) {
-        try { out.transformGroup = collapse(AE.serializePropertyGroup(layer.property("Transform"), 0, 4, walkOpts)); } catch (eT) { out.transformGroup = null; }
+        try { out.transformGroup = collapse(AE.serializePropertyGroup(layer.property("Transform"), 0, 6, walkOpts)); } catch (eT) { out.transformGroup = null; }
         try {
             var effects = layer.property("Effects");
-            out.effectsGroup = (effects && effects.numProperties > 0) ? AE.serializePropertyGroup(effects, 0, 6, walkOpts) : null;
+            out.effectsGroup = (effects && effects.numProperties > 0) ? AE.serializePropertyGroup(effects, 0, 10, walkOpts) : null;
         } catch (eE) { out.effectsGroup = null; }
         try {
             var masks = layer.property("Masks");
-            out.masksGroup = (masks && masks.numProperties > 0) ? AE.serializePropertyGroup(masks, 0, 5, walkOpts) : null;
+            out.masksGroup = (masks && masks.numProperties > 0) ? AE.serializePropertyGroup(masks, 0, 8, walkOpts) : null;
         } catch (eM) { out.masksGroup = null; }
         if (layer instanceof TextLayer) {
-            try { out.textGroup = AE.serializePropertyGroup(layer.property("Text"), 0, 4, walkOpts); } catch (eTx) { out.textGroup = null; }
+            // Text > Animators > Animator > Selectors > Selector > Advanced: 6 deep.
+            try { out.textGroup = AE.serializePropertyGroup(layer.property("Text"), 0, 10, walkOpts); } catch (eTx) { out.textGroup = null; }
         }
         if (layer instanceof ShapeLayer) {
             // Shape layers have a Contents group that holds the shape vector
             // graphics. Walk deeper because shape groups nest several levels.
-            try { out.contentsGroup = AE.serializePropertyGroup(layer.property("Contents"), 0, 10, walkOpts); } catch (eCt) { out.contentsGroup = null; }
+            try { out.contentsGroup = AE.serializePropertyGroup(layer.property("Contents"), 0, 16, walkOpts); } catch (eCt) { out.contentsGroup = null; }
         }
         // Material options (3D layers)
         if (layer instanceof AVLayer && layer.threeDLayer) {
             try {
                 var mat = layer.property("Material Options");
-                out.materialOptionsGroup = mat ? collapse(AE.serializePropertyGroup(mat, 0, 3, walkOpts)) : null;
+                out.materialOptionsGroup = mat ? collapse(AE.serializePropertyGroup(mat, 0, 6, walkOpts)) : null;
             } catch (eMo) { out.materialOptionsGroup = null; }
         }
         // Audio (if layer has audio)
         if (layer instanceof AVLayer && layer.hasAudio) {
             try {
                 var au = layer.property("Audio");
-                out.audioGroup = au ? collapse(AE.serializePropertyGroup(au, 0, 3, walkOpts)) : null;
+                out.audioGroup = au ? collapse(AE.serializePropertyGroup(au, 0, 6, walkOpts)) : null;
             } catch (eAu) { out.audioGroup = null; }
         }
         // Time Remap (AVLayer only, must be enabled)
@@ -763,6 +926,21 @@ AE.serializeLayerFull = function (layer, opts) {
                 out.markers = AE.serializeProperty(marker);
             }
         } catch (eMk) { /* ignore */ }
+        // Camera/Light Options, 3D geometry, Layer Styles.
+        var extra = [];
+        for (var xg = 0; xg < AE.EXTRA_LAYER_GROUPS.length; xg++) {
+            var xmn = AE.EXTRA_LAYER_GROUPS[xg];
+            var grp = null;
+            try { grp = layer.property(xmn); } catch (eXg) {}
+            if (!grp) continue;
+            if (xmn === "ADBE Layer Styles" && !AE.layerHasStyles(grp)) continue;
+            try {
+                var gs = AE.serializePropertyGroup(grp, 0, 10, walkOpts);
+                if (xmn === "ADBE Layer Styles") AE.pruneLayerStyles(gs);
+                if (!(summary && AE.propertyGroupIsEmpty(gs))) extra.push(gs);
+            } catch (eXs) {}
+        }
+        if (extra.length > 0) out.extraGroups = extra;
     }
     return out;
 };
@@ -948,3 +1126,273 @@ AE.serializeCompMarkers = function (comp) {
         return AE.serializeProperty(mp);
     } catch (e) { return null; }
 };
+
+// ---------- Footage sources (export schema v4) ----------
+//
+// A FootageItem's mainSource (and any AVItem's proxySource) carries the
+// Interpret Footage settings. Export records them; import re-creates the source
+// and writes them back in dependency order, then reads every one back so a
+// value AE refused surfaces as a warning instead of a silent loss.
+//
+// Not scriptable in AE (no attribute exists on FileSource / FootageItem as of
+// 26.5, checked with reflect.properties): the per-footage Color tab (input
+// profile, Preserve RGB, linear light). Project-level color settings are
+// carried by AE.PROJECT_ATTRS instead.
+
+AE.FOOTAGE_INTERP_ALPHA = ["alphaMode", "premulColor", "invertAlpha"];
+AE.FOOTAGE_INTERP_TIME = ["fieldSeparationType", "highQualityFieldSeparation", "removePulldown", "conformFrameRate", "loop"];
+
+// Still-image formats AE can read as a numbered sequence. A non-still file
+// source with one of these extensions is an image sequence.
+AE.SEQUENCE_EXTS = {};
+(function () {
+    var list = ("png jpg jpeg tif tiff exr sxr mxr dpx cin tga targa vda icb vst bmp rle dib psd sgi bw rgb rgba " +
+        "iff tdi hdr rgbe xyze rla rpf pic crw cr2 cr3 nef arw dng raf orf rw2 heic heif webp avif jxl").split(" ");
+    for (var i = 0; i < list.length; i++) AE.SEQUENCE_EXTS[list[i]] = true;
+})();
+AE.isSequenceExt = function (path) {
+    var m = /\.([A-Za-z0-9]+)$/.exec(String(path));
+    return !!(m && AE.SEQUENCE_EXTS[m[1].toLowerCase()] === true);
+};
+
+/** The interpretation attributes that mean something for this source. */
+AE.serializeFootageInterpretation = function (src) {
+    var out = {};
+    var hasAlpha = AE.safeGet(function () { return src.hasAlpha; }, false);
+    var still = AE.safeGet(function () { return src.isStill; }, true);
+    if (hasAlpha) AE._readAttrs(src, AE.FOOTAGE_INTERP_ALPHA, out);
+    if (!still) AE._readAttrs(src, AE.FOOTAGE_INTERP_TIME, out);
+    return out;
+};
+
+/**
+ * Numbered-sequence description from the first frame's file name and the
+ * frame count: { start, end, digits } so import can ask for exactly the frames
+ * the item had (ImportOptions.rangeStart/rangeEnd). A name without a frame
+ * number can only have been imported alphabetically.
+ */
+AE.describeSequence = function (path, frames) {
+    var base = String(path).replace(/^.*[\/\\]/, "");
+    var m = /(\d+)(\.[^.]+)$/.exec(base);
+    if (!m) return { alphabetical: true };
+    var start = parseInt(m[1], 10);
+    var out = { start: start, digits: m[1].length };
+    if (frames > 0) out.end = start + frames - 1;
+    return out;
+};
+
+/** Serialize a FootageSource (main or proxy). `frames` sizes a sequence's range. */
+AE.serializeFootageSource = function (src, frames) {
+    var out = {};
+    if (src instanceof SolidSource) {
+        out.sourceKind = "solid";
+        out.color = [src.color[0], src.color[1], src.color[2]];
+    } else if (src instanceof FileSource) {
+        out.sourceKind = "file";
+        var missing = AE.safeGet(function () { return src.missingFootagePath; }, "");
+        var f = AE.safeGet(function () { return src.file; }, null);
+        out.file = f ? f.fsName.replace(/\\/g, "/") : (missing ? String(missing).replace(/\\/g, "/") : null);
+        if (missing) out.missingFootagePath = String(missing).replace(/\\/g, "/");
+        if (out.file && !src.isStill && AE.isSequenceExt(out.file)) out.sequence = AE.describeSequence(out.file, frames);
+    } else if (src instanceof PlaceholderSource) {
+        out.sourceKind = "placeholder";
+    } else {
+        out.sourceKind = "unknown";
+    }
+    out.isStill = AE.safeGet(function () { return src.isStill; }, null);
+    out.hasAlpha = AE.safeGet(function () { return src.hasAlpha; }, null);
+    out.nativeFrameRate = AE.safeGet(function () { return src.nativeFrameRate; }, null);
+    out.displayFrameRate = AE.safeGet(function () { return src.displayFrameRate; }, null);
+    out.interpretation = AE.serializeFootageInterpretation(src);
+    return out;
+};
+
+/** Proxy of any AVItem (footage or comp), or null when it has none. */
+AE.serializeProxy = function (item) {
+    var ps = AE.safeGet(function () { return item.proxySource; }, null);
+    if (!ps) return null;
+    var out = AE.serializeFootageSource(ps, 0);
+    out.useProxy = !!item.useProxy;
+    // A placeholder/solid proxy reports no size of its own; AE sizes it to the item.
+    out.width = item.width; out.height = item.height;
+    out.frameRate = item.frameRate; out.duration = item.duration;
+    return out;
+};
+
+/** Frames in an AVItem at its displayed rate. */
+AE.itemFrameCount = function (item) {
+    var fps = AE.safeGet(function () { return item.frameRate; }, 0);
+    var dur = AE.safeGet(function () { return item.duration; }, 0);
+    return (fps > 0 && dur > 0) ? Math.round(dur * fps) : 0;
+};
+
+/** Frames of footage before looping: AE multiplies an item's duration by `loop`. */
+AE.sourceFrameCount = function (item) {
+    var n = AE.itemFrameCount(item);
+    var loop = AE.safeGet(function () { return item.mainSource.loop; }, 1);
+    return (typeof loop === "number" && loop > 1) ? Math.round(n / loop) : n;
+};
+
+/**
+ * Write interpretation settings onto a source in the order AE accepts them
+ * (pulldown needs field separation; conform 0 is refused while pulldown is
+ * on; alpha extras need an alpha), then read each one back. Returns the list
+ * of attributes that did not stick.
+ */
+AE.applyFootageInterpretation = function (src, interp, warn, what) {
+    if (!src || !interp) return [];
+    interp = AE.resolveInterpretationEnums(interp, warn, what);
+    var failed = [];
+    function set(name) {
+        if (interp[name] === undefined || interp[name] === null) return;
+        try {
+            var cur = src[name];
+            if (!AE._interpEqual(cur, interp[name])) src[name] = interp[name];
+        } catch (e) { warn(what + ": interpretation " + name + " not applied: " + AE.errText(e)); }
+    }
+    var still = AE.safeGet(function () { return src.isStill; }, true);
+    if (!still) {
+        if (interp.removePulldown !== undefined && interp.removePulldown === PulldownPhase.OFF) {
+            set("removePulldown");
+            set("fieldSeparationType");
+        } else {
+            set("fieldSeparationType");
+            set("removePulldown");
+        }
+        var fieldOn = AE.safeGet(function () { return src.fieldSeparationType !== FieldSeparationType.OFF; }, false);
+        if (fieldOn) set("highQualityFieldSeparation");
+        set("conformFrameRate");
+        set("loop");
+    }
+    var hasAlpha = AE.safeGet(function () { return src.hasAlpha; }, false);
+    if (hasAlpha) {
+        set("alphaMode");
+        if (AE.safeGet(function () { return src.alphaMode === AlphaMode.PREMULTIPLIED; }, false)) set("premulColor");
+        set("invertAlpha");
+    }
+    // Read back: anything that differs is reported, never dropped silently.
+    for (var k in interp) {
+        if (!interp.hasOwnProperty(k)) continue;
+        if (k === "highQualityFieldSeparation" && !AE.safeGet(function () { return src.fieldSeparationType !== FieldSeparationType.OFF; }, false)) continue;
+        if (k === "premulColor" && !AE.safeGet(function () { return src.alphaMode === AlphaMode.PREMULTIPLIED; }, false)) continue;
+        var isAlphaAttr = (k === "alphaMode" || k === "premulColor" || k === "invertAlpha");
+        if (isAlphaAttr && !hasAlpha) { failed.push(k); warn(what + ": source has no alpha now; " + k + " not applied"); continue; }
+        if (!isAlphaAttr && still) { failed.push(k); warn(what + ": source is still now; " + k + " not applied"); continue; }
+        var got = AE.safeGet(function () { return src[k]; }, null);
+        if (!AE._interpEqual(got, interp[k])) {
+            failed.push(k);
+            warn(what + ": interpretation " + k + " is " + AE._jsonText(got) + ", wanted " + AE._jsonText(interp[k]));
+        }
+    }
+    return failed;
+};
+
+// Enum-valued interpretation fields may be written by name ("STRAIGHT",
+// "UPPER_FIELD_FIRST", "OFF") so documents need not carry AE's raw numbers.
+AE.INTERP_ENUMS = { alphaMode: "AlphaMode", fieldSeparationType: "FieldSeparationType", removePulldown: "PulldownPhase" };
+
+AE.resolveInterpretationEnums = function (interp, warn, what) {
+    var out = {};
+    for (var k in interp) {
+        if (!interp.hasOwnProperty(k)) continue;
+        var v = interp[k];
+        if (typeof v === "string" && AE.INTERP_ENUMS.hasOwnProperty(k)) {
+            var en = $.global[AE.INTERP_ENUMS[k]];
+            var num = en ? en[v.toUpperCase()] : undefined;
+            if (typeof num !== "number") { warn(what + ": unknown " + k + " '" + v + "'"); continue; }
+            v = num;
+        }
+        out[k] = v;
+    }
+    return out;
+};
+
+AE._interpEqual = function (a, b) {
+    if (a instanceof Array || b instanceof Array) {
+        if (!(a instanceof Array) || !(b instanceof Array) || a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 1e-4) return false;
+        return true;
+    }
+    if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) < 1e-4;
+    return a === b;
+};
+
+AE._jsonText = function (v) {
+    try { return JSON.stringify(v); } catch (e) { return String(v); }
+};
+
+/**
+ * Import a file (or numbered sequence) as plain footage. Returns
+ * { item, rangeHonored } or { item: null, reason }.
+ */
+AE.importFootageFile = function (path, sequence, warn, what) {
+    var f = new File(path);
+    if (!f.exists) return { item: null, reason: "missing" };
+    var io = new ImportOptions(f);
+    var ranged = false;
+    if (sequence) {
+        io.sequence = true;
+        if (sequence.alphabetical) {
+            io.forceAlphabetical = true;
+        } else if (typeof sequence.start === "number" && typeof sequence.end === "number") {
+            try { io.forceAlphabetical = false; io.rangeStart = sequence.start; io.rangeEnd = sequence.end; ranged = true; } catch (eR) { ranged = false; }
+        }
+    }
+    try { if (io.canImportAs(ImportAsType.FOOTAGE)) io.importAs = ImportAsType.FOOTAGE; } catch (eAs) {}
+    var item = null;
+    try {
+        item = app.project.importFile(io);
+    } catch (eImp) {
+        if (!ranged) throw eImp;
+        // The frames on disk no longer cover the recorded range: take what is there.
+        warn(what + ": frames " + sequence.start + "-" + sequence.end + " not all on disk (" + AE.errText(eImp) + "); imported the whole sequence");
+        var io2 = new ImportOptions(f);
+        io2.sequence = true;
+        try { if (io2.canImportAs(ImportAsType.FOOTAGE)) io2.importAs = ImportAsType.FOOTAGE; } catch (eAs2) {}
+        item = app.project.importFile(io2);
+        ranged = false;
+    }
+    return { item: item, rangeHonored: ranged };
+};
+
+/** Re-create a proxy on an AVItem from AE.serializeProxy output. */
+AE.applyProxy = function (item, p, warn, what) {
+    if (!p) return;
+    var name = item.name;
+    var w = Math.max(4, p.width || item.width || 100);
+    var h = Math.max(4, p.height || item.height || 100);
+    var fps = p.frameRate || item.frameRate || 30;
+    var dur = (p.duration !== undefined && p.duration !== null) ? p.duration : (item.duration || 0);
+    try {
+        if (p.sourceKind === "file") {
+            var f = p.file ? new File(p.file) : null;
+            if (!f || !f.exists) {
+                warn(what + ": proxy file '" + p.file + "' not found on disk; proxy set to a placeholder");
+                item.setProxyWithPlaceholder(name, w, h, fps, dur);
+            } else if (p.sequence) {
+                item.setProxyWithSequence(f, !!p.sequence.alphabetical);
+            } else {
+                item.setProxy(f);
+            }
+        } else if (p.sourceKind === "placeholder") {
+            item.setProxyWithPlaceholder(name, w, h, fps, dur);
+        } else if (p.sourceKind === "solid") {
+            item.setProxyWithSolid(p.color || [0, 0, 0], name, w, h, item.pixelAspect || 1);
+        } else {
+            warn(what + ": proxy of kind '" + p.sourceKind + "' cannot be re-created; skipped");
+            return;
+        }
+        AE.applyFootageInterpretation(item.proxySource, p.interpretation, warn, what + " proxy");
+        item.useProxy = !!p.useProxy;
+    } catch (e) {
+        warn(what + ": proxy restore failed: " + AE.errText(e));
+    }
+};
+
+// Project settings carried in doc.project.settings. Order matters: the color
+// management system decides which of the color attributes exist.
+AE.PROJECT_ATTRS = ["bitsPerChannel", "colorManagementSystem", "ocioConfigurationFile", "workingSpace",
+    "workingGamma", "linearBlending", "linearizeWorkingSpace", "compensateForSceneReferredProfiles",
+    "lutInterpolationMethod", "expressionEngine", "timeDisplayType", "framesCountType",
+    "framesUseFeetFrames", "feetFramesFilmType", "footageTimecodeDisplayStartType", "displayStartFrame",
+    "transparencyGridThumbnails"];

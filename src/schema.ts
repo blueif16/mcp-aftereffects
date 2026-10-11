@@ -9,7 +9,7 @@
 // loader will refuse documents with a schemaVersion higher than the runtime
 // version it understands; lower versions are read best-effort.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 4;
 
 // --- Leaf value types ---
 
@@ -193,25 +193,81 @@ export interface CompItemSpec extends ItemSpecBase {
   shutterPhase?: number;
   motionBlur?: boolean;
   displayStartTime?: number;
+  proxy?: ProxySpec;
   layers?: LayerSpec[];
   markers?: PropertySpec | null;
 }
 
-export interface FootageItemSpec extends ItemSpecBase {
+/**
+ * Interpret Footage settings (v4). Alpha fields appear only when the source has
+ * alpha; time fields only when it is not still. Values are AE enum numbers (import also takes enum names).
+ */
+export interface FootageInterpretation {
+  /** AlphaMode enum number, or its name: "STRAIGHT" | "PREMULTIPLIED" | "IGNORE". */
+  alphaMode?: number | string;
+  premulColor?: AeColor;
+  invertAlpha?: boolean;
+  /** FieldSeparationType number or name ("OFF", "UPPER_FIELD_FIRST", "LOWER_FIELD_FIRST"). */
+  fieldSeparationType?: number | string;
+  highQualityFieldSeparation?: boolean;
+  /** PulldownPhase number or name ("OFF", "WSSWW", …). */
+  removePulldown?: number | string;
+  /** 0 = use the native frame rate. */
+  conformFrameRate?: number;
+  loop?: number;
+}
+
+/**
+ * Numbered image sequence (v4). `start`/`end` are the frame numbers in the file
+ * names, so import asks AE for exactly that range. Omit `end` to take every
+ * frame on disk; `alphabetical` means the sequence had no frame numbers.
+ */
+export interface SequenceSpec {
+  start?: number;
+  end?: number;
+  digits?: number;
+  alphabetical?: boolean;
+}
+
+/** The source-level fields shared by a footage item and a proxy. */
+export interface FootageSourceSpec {
+  sourceKind: SourceKind;
+  /** solid */
+  color?: AeColor;
+  /** file: absolute, or relative to the document's pathBase / import baseDir. */
+  file?: string | null;
+  missingFootagePath?: string | null;
+  sequence?: SequenceSpec;
+  isStill?: boolean | null;
+  hasAlpha?: boolean | null;
+  nativeFrameRate?: number | null;
+  displayFrameRate?: number | null;
+  interpretation?: FootageInterpretation;
+}
+
+export interface ProxySpec extends FootageSourceSpec {
+  useProxy: boolean;
+  width?: number;
+  height?: number;
+  frameRate?: number;
+  duration?: number;
+}
+
+export interface FootageItemSpec extends ItemSpecBase, FootageSourceSpec {
   type: "FootageItem";
   width: number;
   height: number;
   duration: number;
-  sourceKind: SourceKind;
+  frameRate?: number;
+  pixelAspect?: number;
+  hasVideo?: boolean;
+  hasAudio?: boolean;
+  footageMissing?: boolean;
   // solid
-  color?: AeColor;
   sourceWidth?: number;
   sourceHeight?: number;
   alphaMode?: number;
-  hasAlpha?: boolean;
-  // file
-  file?: string | null;
-  missingFootagePath?: string | null;
+  proxy?: ProxySpec;
 }
 
 export type ItemSpec = FolderItemSpec | CompItemSpec | FootageItemSpec;
@@ -226,6 +282,10 @@ export interface AeProjectDoc {
     file: string | null;
     bitsPerChannel: number;
     timeDisplayType: string;
+    /** v4: project settings (color management, time display, expressions). */
+    settings?: Record<string, unknown>;
   };
+  /** Set by export with relativeTo: the directory relative footage paths are under. */
+  pathBase?: string;
   items: ItemSpec[];
 }

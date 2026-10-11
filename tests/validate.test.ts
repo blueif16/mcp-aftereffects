@@ -11,9 +11,65 @@ interface TestCase {
   expectOk: boolean;
   expectIssuePaths?: string[];
   expectWarningPaths?: string[];
+  expectNoWarnings?: boolean;
 }
 
 const cases: TestCase[] = [
+  {
+    name: "items in the root folder (id 0) do not warn",
+    input: {
+      schemaVersion: SCHEMA_VERSION,
+      items: [{ id: 5, name: "f", type: "FolderItem", parentFolderId: 0 }],
+    },
+    expectOk: true,
+    expectNoWarnings: true,
+  },
+  {
+    name: "v4 footage: sequence, interpretation, proxy, placeholder",
+    input: {
+      schemaVersion: SCHEMA_VERSION,
+      items: [
+        {
+          id: 1, name: "seq", type: "FootageItem", parentFolderId: null, sourceKind: "file",
+          file: "D:/m/hf_1001.png", width: 640, height: 360, duration: 1,
+          sequence: { start: 1001, end: 1030, digits: 4 },
+          interpretation: { alphaMode: "STRAIGHT", fieldSeparationType: 5613, invertAlpha: false, conformFrameRate: 29.97, loop: 1, premulColor: [0, 0, 0] },
+          proxy: { sourceKind: "placeholder", useProxy: false, width: 320, height: 180 },
+        },
+        { id: 2, name: "ph", type: "FootageItem", parentFolderId: null, sourceKind: "placeholder", width: 1280, height: 720, duration: 5 },
+        {
+          id: 3, name: "c", type: "CompItem", parentFolderId: null, width: 100, height: 100, duration: 1, frameRate: 30,
+          proxy: { sourceKind: "file", useProxy: true, file: "D:/m/p.mov" },
+        },
+      ],
+    },
+    expectOk: true,
+  },
+  {
+    name: "v4 footage: bad sequence, interpretation and proxy",
+    input: {
+      schemaVersion: SCHEMA_VERSION,
+      items: [
+        {
+          id: 1, name: "seq", type: "FootageItem", parentFolderId: null, sourceKind: "file", file: "a.png",
+          sequence: { start: 10, end: 5 },
+          interpretation: { alphaMode: "not a name!", premulColor: [0, 0], invertAlpha: 1 },
+          proxy: { sourceKind: "file", useProxy: "yes" },
+        },
+        { id: 2, name: "ph", type: "FootageItem", parentFolderId: null, sourceKind: "placeholder" },
+      ],
+    },
+    expectOk: false,
+    expectIssuePaths: [
+      "items[0].sequence",
+      "items[0].interpretation.alphaMode",
+      "items[0].interpretation.invertAlpha",
+      "items[0].interpretation.premulColor",
+      "items[0].proxy.useProxy",
+      "items[0].proxy.file",
+      "items[1]",
+    ],
+  },
   {
     name: "valid minimal doc",
     input: {
@@ -218,6 +274,7 @@ describe("validateAeProjectDoc", () => {
       for (const p of tc.expectIssuePaths ?? []) {
         expect(result.issues.map((i) => i.path)).toContain(p);
       }
+      if (tc.expectNoWarnings) expect(result.warnings).toEqual([]);
       for (const p of tc.expectWarningPaths ?? []) {
         expect(result.warnings.map((w) => w.path)).toContain(p);
       }

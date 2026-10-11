@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { rejectedOutputPath } from "../config.js";
 import { errorResult } from "../errors.js";
+import { isAbsolutePath, relativizeFootagePaths, toSlash } from "../footage-paths.js";
 import { defineTool, jsonResult, toMcpResult } from "./define-tool.js";
 
 export const projectExportTool = defineTool({
@@ -11,7 +12,8 @@ export const projectExportTool = defineTool({
   title: "Export project JSON",
   description:
     "Serialize the entire project to JSON (folders, comps, layers, keyframes, effects, " +
-    "shapes, markers, time remap, solids, file refs). Write to `outPath` or return inline.",
+    "shapes, markers, time remap, solids, footage with interpretation, sequences, proxies, project settings). " +
+    "Write to `outPath` or return inline. `relativeTo` makes footage paths under a directory relative.",
   group: "document",
   blockedInReadOnly: false,
   effect: "write",
@@ -29,8 +31,20 @@ export const projectExportTool = defineTool({
       .describe(
         "Pretty-print the JSON (2-space indent). Default: true when writing to disk, false otherwise.",
       ),
+    relativeTo: z
+      .string()
+      .optional()
+      .describe(
+        "Absolute directory. Footage paths inside it are written relative to it and the document records it as `pathBase`, " +
+          "so ae_project_import_json resolves them again (or against its own baseDir when the media moved).",
+      ),
   },
   handler: async (args, transport) => {
+    if (args.relativeTo !== undefined && !isAbsolutePath(args.relativeTo)) {
+      return errorResult("INVALID_ARGS", `relativeTo must be an absolute directory, got '${args.relativeTo}'`, {
+        hint: "Pass the media root as an absolute path, e.g. D:/studio-mirror/my-video.",
+      });
+    }
     if (args.outPath) {
       const rejection = rejectedOutputPath(args.outPath);
       if (rejection !== null) {
@@ -53,6 +67,10 @@ export const projectExportTool = defineTool({
     if (!result.ok) return toMcpResult(result);
 
     const doc = result.result;
+    if (args.relativeTo !== undefined && doc && typeof doc === "object") {
+      relativizeFootagePaths(doc, args.relativeTo);
+      (doc as Record<string, unknown>).pathBase = toSlash(args.relativeTo).replace(/\/+$/, "");
+    }
     const pretty = args.pretty ?? !!args.outPath;
     const jsonText = JSON.stringify(doc, null, pretty ? 2 : 0);
 
