@@ -9,7 +9,7 @@
 // loader will refuse documents with a schemaVersion higher than the runtime
 // version it understands; lower versions are read best-effort.
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 // --- Leaf value types ---
 
@@ -114,6 +114,8 @@ export type LayerType =
   | "ShapeLayer"
   | "CameraLayer"
   | "LightLayer"
+  | "ThreeDModelLayer"
+  | "ParametricMeshLayer"
   | "Layer";
 
 export interface LayerSpec {
@@ -132,7 +134,9 @@ export interface LayerSpec {
   label: number;
   /** Parent by index + name (for sanity during import). */
   parent?: { index: number; name: string } | null;
-  /** AVLayer-specific: source item id (remapped during import). */
+  /** ParametricMeshLayer: cube|sphere|plane|cylinder|cone|torus (also attrs.parametricMeshType). */
+  meshType?: string | null;
+  /** AVLayer / ThreeDModelLayer: source item id (remapped during import). */
   sourceId?: number | null;
   sourceName?: string | null;
   width?: number;
@@ -157,6 +161,17 @@ export interface LayerSpec {
   timeRemapEnabled?: boolean;
   timeRemapProperty?: PropertySpec | null;
   markers?: PropertySpec | null;
+  /**
+   * Camera/Light Options, Geometry Options, the live mesh/bevel option group of
+   * a parametric mesh, Material Assignment, Compositing/Displacement Options,
+   * model Animation Options, Layer Styles (schema v5 adds the A3D groups).
+   */
+  extraGroups?: PropertyGroupSpec[];
+  /**
+   * Layer switches. v5: lightSourceIndex/lightSourceName (environment light
+   * source, a layer of the same comp) and parametricMeshType.
+   */
+  attrs?: Record<string, unknown>;
 }
 
 // --- Items (project level) ---

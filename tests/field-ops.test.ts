@@ -71,9 +71,9 @@ describe("separated-dimension routing", () => {
     expect(getOp("keyframe.add")!.toJsx({ ...target, time: 1, value: [1, 2] })).toContain(
       "AE.writeValue(_node, [1,2], 1)",
     );
-    expect(getOp("property.set")!.toJsx({ ...target, value: [1, 2] })).toContain(
-      "AE.writeValue(_node, [1,2])",
-    );
+    const ps = getOp("property.set")!.toJsx({ ...target, value: [1, 2] });
+    expect(ps).toContain("var _value = [1,2];");
+    expect(ps).toContain("AE.writeValue(_node, _value)");
     const xf = getOp("transform.set")!.toJsx({ comp: "Main", layer: 1, position: [1, 2] });
     expect(xf).toContain("AE.writeValue(_xf.position, [1,2])");
     expect(xf).not.toContain("_xf.position.setValue");

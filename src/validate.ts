@@ -154,7 +154,11 @@ export function validateAeProjectDoc(doc: unknown): ValidationResult {
     if (item && item.type === "CompItem" && Array.isArray(item.layers)) {
       for (let li = 0; li < item.layers.length; li++) {
         const layer = item.layers[li];
-        if (layer && layer.type === "AVLayer" && typeof layer.sourceId === "number") {
+        if (
+          layer &&
+          (layer.type === "AVLayer" || layer.type === "ThreeDModelLayer") &&
+          typeof layer.sourceId === "number"
+        ) {
           if (!seenIds.has(layer.sourceId)) {
             v.warn(
               `items[${i}].layers[${li}].sourceId`,
@@ -178,9 +182,16 @@ function validateLayer(v: Validator, path: string, layer: LayerSpec): void {
   if (typeof layer.name !== "string") v.err(`${path}.name`, "missing or not a string");
   if (typeof layer.type !== "string") v.err(`${path}.type`, "missing or not a string");
   else if (
-    ["AVLayer", "TextLayer", "ShapeLayer", "CameraLayer", "LightLayer", "Layer"].indexOf(
-      layer.type,
-    ) === -1
+    [
+      "AVLayer",
+      "TextLayer",
+      "ShapeLayer",
+      "CameraLayer",
+      "LightLayer",
+      "ThreeDModelLayer",
+      "ParametricMeshLayer",
+      "Layer",
+    ].indexOf(layer.type) === -1
   ) {
     v.warn(`${path}.type`, `unknown layer type: ${layer.type}`);
   }
@@ -253,7 +264,8 @@ function validateFootageSource(v: Validator, base: string, src: Record<string, u
         v.err(`${base}.sequence`, `end ${seq.end} is before start ${seq.start}`);
       if (seq.end !== undefined && seq.start === undefined)
         v.err(`${base}.sequence.start`, "required when end is set");
-      if (src.sourceKind !== "file") v.warn(`${base}.sequence`, "only file sources can be sequences; ignored");
+      if (src.sourceKind !== "file")
+        v.warn(`${base}.sequence`, "only file sources can be sequences; ignored");
     }
   }
   if (src.interpretation !== undefined) {
@@ -264,19 +276,30 @@ function validateFootageSource(v: Validator, base: string, src: Record<string, u
     }
     for (const k of INTERP_NUMBERS) {
       // Enum fields may also be given by name ("STRAIGHT", "UPPER_FIELD_FIRST", "OFF").
-      const named = k !== "conformFrameRate" && typeof it[k] === "string" && /^[A-Z0-9_]+$/i.test(it[k] as string);
+      const named =
+        k !== "conformFrameRate" &&
+        typeof it[k] === "string" &&
+        /^[A-Z0-9_]+$/i.test(it[k] as string);
       if (it[k] !== undefined && typeof it[k] !== "number" && !named)
-        v.err(`${base}.interpretation.${k}`, k === "conformFrameRate" ? "must be a number" : "must be an enum number or name");
+        v.err(
+          `${base}.interpretation.${k}`,
+          k === "conformFrameRate" ? "must be a number" : "must be an enum number or name",
+        );
     }
     for (const k of INTERP_BOOLEANS) {
       // `loop` is a count in AE (1 = play once); older docs may carry a boolean.
       if (k === "loop" && typeof it[k] === "number") continue;
-      if (it[k] !== undefined && typeof it[k] !== "boolean") v.err(`${base}.interpretation.${k}`, "must be a boolean");
+      if (it[k] !== undefined && typeof it[k] !== "boolean")
+        v.err(`${base}.interpretation.${k}`, "must be a boolean");
     }
     const c = it.conformFrameRate;
-    if (typeof c === "number" && (c < 0 || c > 999)) v.err(`${base}.interpretation.conformFrameRate`, "out of range");
+    if (typeof c === "number" && (c < 0 || c > 999))
+      v.err(`${base}.interpretation.conformFrameRate`, "out of range");
     const pm = it.premulColor;
-    if (pm !== undefined && (!Array.isArray(pm) || pm.length !== 3 || pm.some((x) => typeof x !== "number")))
+    if (
+      pm !== undefined &&
+      (!Array.isArray(pm) || pm.length !== 3 || pm.some((x) => typeof x !== "number"))
+    )
       v.err(`${base}.interpretation.premulColor`, "must be [r,g,b]");
   }
 }
@@ -289,6 +312,7 @@ function validateProxy(v: Validator, base: string, proxy: unknown): void {
   if (typeof proxy.sourceKind !== "string" || !SOURCE_KINDS.has(proxy.sourceKind))
     v.err(`${base}.sourceKind`, "must be solid, file, placeholder or unknown");
   if (typeof proxy.useProxy !== "boolean") v.err(`${base}.useProxy`, "missing or not a boolean");
-  if (proxy.sourceKind === "file" && typeof proxy.file !== "string") v.err(`${base}.file`, "file proxy requires a path");
+  if (proxy.sourceKind === "file" && typeof proxy.file !== "string")
+    v.err(`${base}.file`, "file proxy requires a path");
   validateFootageSource(v, base, proxy);
 }

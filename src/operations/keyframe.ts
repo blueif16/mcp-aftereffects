@@ -125,16 +125,18 @@ registerOp({
             for (var _li = 0; _li < _layers.length; _li++) {
                 var _l = _layers[_li];
                 var _node = AE.propertyAtPath(_l, _propPath);
-                if (!_node || _node.propertyType !== PropertyType.PROPERTY) { _failed++; _out.push({ index: _l.index, name: _l.name, ok: false, error: "property path not found on this layer" }); continue; }
+                if (!_node || _node.propertyType !== PropertyType.PROPERTY) { _failed++; _out.push({ index: _l.index, name: _l.name, ok: false, error: _node ? ("'" + _node.name + "' is a property group, not a value (property.list shows its members)") : "property path not found on this layer (property.list shows what exists)" }); continue; }
                 try {
                     var _r = AE.applyKeySpecs(_node, _specs, _opts);
                     _out.push({ index: _l.index, name: _l.name, ok: true, numKeys: _r.numKeys, separated: _r.separated, warnings: _r.warnings });
                 } catch (eK) {
                     _failed++;
-                    _out.push({ index: _l.index, name: _l.name, ok: false, error: AE.errText(eK) });
+                    _out.push({ index: _l.index, name: _l.name, ok: false, error: AE.describeSetError(_node, eK) });
                 }
             }
-            return { ok: _failed === 0, error: _failed === 0 ? null : (_failed + " of " + _out.length + " layers failed"), count: _out.length, layers: _out };
+            var _firstErr = null;
+            for (var _oi = 0; _oi < _out.length; _oi++) if (!_out[_oi].ok) { _firstErr = _out[_oi].name + ": " + _out[_oi].error; break; }
+            return { ok: _failed === 0, error: _failed === 0 ? null : (_failed + " of " + _out.length + " layers failed — " + _firstErr), count: _out.length, layers: _out };
         `;
   },
 });

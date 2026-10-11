@@ -320,6 +320,314 @@ AE.coerceLayerPropValue = function (key, val) {
     return val;
 };
 
+// ---------- Layer classes ----------
+// The docs list TextLayer, ShapeLayer, ThreeDModelLayer and ParametricMeshLayer
+// as AVLayer subclasses, but `layer instanceof AVLayer` is FALSE for all four
+// on AE 26.5 (verified 2026-10-10: exports of text, shape, GLB and mesh layers
+// carried no threeDLayer, sourceId or AV switches). Every "is this an AV
+// layer" test goes through here.
+AE.isAVLayer = function (layer) {
+    if (!layer) return false;
+    try { if (layer instanceof AVLayer || layer instanceof TextLayer || layer instanceof ShapeLayer) return true; } catch (eAv) {}
+    return AE.isModelLayer(layer) || AE.isMeshLayer(layer);
+};
+
+/** A 3D model (GLB/glTF/OBJ) layer, AE 24.4+. */
+AE.isModelLayer = function (layer) {
+    try { return typeof ThreeDModelLayer !== "undefined" && layer instanceof ThreeDModelLayer; } catch (e) { return false; }
+};
+
+/** A parametric mesh layer, AE 26.3+. */
+AE.isMeshLayer = function (layer) {
+    try { return typeof ParametricMeshLayer !== "undefined" && layer instanceof ParametricMeshLayer; } catch (e) { return false; }
+};
+
+// ---------- Advanced 3D: parametric meshes ----------
+// Every mesh layer carries the option groups of ALL six mesh types; only the
+// current type's groups are live (the others throw "hidden" on setValue), and
+// they share the display names "Mesh Options" / "Bevel Options". Group
+// matchNames verified on AE 26.5.
+AE.MESH_TYPE_NAMES = ["cube", "sphere", "plane", "cylinder", "cone", "torus"];
+AE.MESH_GROUPS = {
+    cube: ["ADBE CubeMeshOptionsSGrp", "ADBE CubeBevelOptionsSGrp"],
+    sphere: ["ADBE SphereMeshOptionsSGrp"],
+    plane: ["ADBE PlaneMeshOptionsSGrp"],
+    cylinder: ["ADBE CylinderMeshOptionsSGrp", "ADBE CylinderBevelOptionsSGrp"],
+    cone: ["ADBE ConeMeshOptionsSGrp", "ADBE ConeBevelBevelSGrp"],
+    torus: ["ADBE TorusMeshOptionsSGrp"]
+};
+
+/** ParametricMeshType value for a name (cube|sphere|plane|cylinder|cone|torus), or undefined. */
+AE.meshTypeEnum = function (name) {
+    try { return ParametricMeshType[String(name).toUpperCase()]; } catch (e) { return undefined; }
+};
+
+/** The mesh type of a parametric mesh layer as a name, or null. */
+AE.meshTypeName = function (layer) {
+    var t;
+    try { t = layer.parametricMeshType; } catch (e) { return null; }
+    for (var i = 0; i < AE.MESH_TYPE_NAMES.length; i++) {
+        if (AE.meshTypeEnum(AE.MESH_TYPE_NAMES[i]) === t) return AE.MESH_TYPE_NAMES[i];
+    }
+    return null;
+};
+
+/** True when matchName is a mesh/bevel option group of any mesh type. */
+AE.isMeshOptionGroup = function (matchName) {
+    for (var k in AE.MESH_GROUPS) {
+        if (!AE.MESH_GROUPS.hasOwnProperty(k)) continue;
+        for (var i = 0; i < AE.MESH_GROUPS[k].length; i++) if (AE.MESH_GROUPS[k][i] === matchName) return true;
+    }
+    return false;
+};
+
+/** For a mesh option group on `layer`: true when it belongs to the current mesh type. null for other groups. */
+AE.meshGroupActive = function (layer, matchName) {
+    if (!AE.isMeshOptionGroup(matchName)) return null;
+    var cur = AE.meshTypeName(layer);
+    var live = cur ? AE.MESH_GROUPS[cur] : [];
+    for (var i = 0; i < live.length; i++) if (live[i] === matchName) return true;
+    return false;
+};
+
+// Child of a property group by matchName or display name. Display names are
+// ambiguous on mesh layers (six "Mesh Options" groups); there the group of the
+// current mesh type wins, so ["Mesh Options","Radius"] reaches the live one.
+AE.childProperty = function (node, seg) {
+    if (typeof seg === "number") return node.property(seg);
+    var first = null;
+    try { first = node.property(seg); } catch (eP) {}
+    if (!first || first.matchName === seg) return first;
+    // Display-name hit: on a mesh layer, prefer an active mesh group.
+    var layer = null;
+    try { layer = (node.containingComp ? node : AE.ownerLayer(node)); } catch (eL) {}
+    if (!layer || !AE.isMeshLayer(layer) || AE.meshGroupActive(layer, first.matchName) !== false) return first;
+    for (var i = 1; i <= node.numProperties; i++) {
+        var c = node.property(i);
+        if (c.name === seg && AE.meshGroupActive(layer, c.matchName) === true) return c;
+    }
+    return first;
+};
+
+// ---------- Settable / hidden properties ----------
+// AE exposes no attribute for "hidden in the UI": hidden properties report the
+// same canVaryOverTime/canSetExpression/active/enabled as live ones and only
+// fail on write ("Can not 'set value' with this property, because the
+// property or a parent property is hidden"). Which ones are hidden depends on
+// layer class, renderer and other values (falloff type, light source, mesh
+// type), so the only reliable test is writing the current value back.
+
+AE.isHiddenError = function (e) {
+    return /hidden/i.test(AE.errText(e));
+};
+
+// Value types where writing the read value back is an exact no-op.
+AE._probeableType = function (prop) {
+    var t = prop.propertyValueType;
+    return t === PropertyValueType.OneD || t === PropertyValueType.TwoD || t === PropertyValueType.ThreeD ||
+        t === PropertyValueType.TwoD_SPATIAL || t === PropertyValueType.ThreeD_SPATIAL || t === PropertyValueType.COLOR;
+};
+
+/**
+ * { settable: true|false|null, hidden: bool, reason } for a leaf property.
+ * null = not decidable without a real edit (keyed, separated, custom data).
+ * Writes prop.value back onto an un-keyed property: no change to the project.
+ */
+// Never probed: writing Time Remap can switch it on, and a value written
+// into a Layer Styles / text-animator placeholder can ADD that style or
+// property (those groups list every possible member).
+AE.PROBE_SKIP = { "ADBE Time Remapping": true, "ADBE Layer Styles": true, "ADBE Text Animator Properties": true };
+
+AE._underProbeSkip = function (prop) {
+    var p = prop;
+    for (var d = 0; d < 12 && p; d++) {
+        try { if (AE.PROBE_SKIP[p.matchName] === true) return true; } catch (e) { return true; }
+        try { p = p.parentProperty; } catch (e2) { p = null; }
+    }
+    return false;
+};
+
+AE.probeSettable = function (prop) {
+    try {
+        if (prop.propertyType !== PropertyType.PROPERTY) return { settable: null, hidden: false };
+        if (AE._underProbeSkip(prop)) return { settable: null, hidden: false };
+        if (prop.propertyValueType === PropertyValueType.NO_VALUE) return { settable: false, hidden: false, reason: "holds no value" };
+        if (prop.propertyValueType === PropertyValueType.CUSTOM_VALUE) return { settable: false, hidden: false, reason: "custom data scripting cannot read or set" };
+        if (!AE._probeableType(prop)) return { settable: null, hidden: false };
+        if (prop.numKeys > 0) return { settable: true, hidden: false, reason: "keyframed: set values with keyframe ops" };
+        if (prop.isSeparationLeader && prop.dimensionsSeparated) return { settable: true, hidden: false, reason: "dimensions separated: set the X/Y/Z followers" };
+    } catch (eT) { return { settable: null, hidden: false }; }
+    try {
+        prop.setValue(prop.value);
+        return { settable: true, hidden: false };
+    } catch (e) {
+        if (AE.isHiddenError(e)) return { settable: false, hidden: true, reason: "hidden for this layer type, renderer or current settings" };
+        return { settable: false, hidden: false, reason: AE.errText(e) };
+    }
+};
+
+/**
+ * Whether a whole group is hidden: true when every probe-able leaf under it
+ * (depth-first, up to `budget` leaves) refuses writes as hidden, false as soon
+ * as one accepts, null when nothing in it can be probed. A single leaf is not
+ * enough: Material Assignment on a mesh hides Projection Mode but not Base
+ * Color.
+ */
+AE.groupHidden = function (group, budget) {
+    budget = budget || { n: 24 };
+    try { if (AE.PROBE_SKIP[group.matchName] === true) return null; } catch (eS) { return null; }
+    var sawHidden = false;
+    for (var i = 1; i <= group.numProperties && budget.n > 0; i++) {
+        var c;
+        try { c = group.property(i); } catch (e) { continue; }
+        if (!c) continue;
+        if (c.propertyType === PropertyType.PROPERTY) {
+            var probeable = false;
+            try { probeable = AE._probeableType(c) && !(c.numKeys > 0); } catch (eP) {}
+            if (!probeable) continue;
+            budget.n--;
+            var r = AE.probeSettable(c);
+            if (r.settable === true) return false;
+            if (r.hidden) sawHidden = true;
+        } else {
+            var sub = AE.groupHidden(c, budget);
+            if (sub === false) return false;
+            if (sub === true) sawHidden = true;
+        }
+    }
+    return sawHidden ? true : null;
+};
+
+/** Valid range of a numeric property as { min, max } (either may be absent), or null. */
+AE.propertyRange = function (prop) {
+    var r = {}, any = false;
+    try { if (prop.hasMin) { r.min = prop.minValue; any = true; } } catch (e1) {}
+    try { if (prop.hasMax) { r.max = prop.maxValue; any = true; } } catch (e2) {}
+    return any ? r : null;
+};
+
+/**
+ * Full, actionable text for a failed write: AE's message untruncated, plus
+ * what the property accepts (range, units, keyed/expression state) and why a
+ * hidden property refuses. Used by property.set, effect.set_property and
+ * keyframe writers.
+ */
+AE.describeSetError = function (prop, e, value) {
+    var msg = AE.errText(e);
+    var parts = [];
+    try {
+        if (prop.propertyType !== PropertyType.PROPERTY) {
+            var note = "'" + prop.name + "' (" + prop.matchName + ") is a property group, not a value; list its members with property.list";
+            if (prop.matchName === "ADBE Light Env Atom") note += ". An environment light's source is a layer: use light.set_source";
+            return note;
+        }
+    } catch (eG) {}
+    try { parts.push("property '" + prop.name + "' (" + prop.matchName + ")"); } catch (eN) {}
+    var rng = AE.propertyRange(prop);
+    if (rng) {
+        var units = AE.safeGet(function () { return prop.unitsText; }, "");
+        parts.push("valid range " + (rng.min !== undefined ? rng.min : "-inf") + " to " + (rng.max !== undefined ? rng.max : "inf") + (units ? " " + units : ""));
+    }
+    if (AE.isHiddenError(e)) parts.push("it is hidden for this layer type, renderer or current settings (property.list marks these hidden:true)");
+    try { if (prop.numKeys > 0) parts.push("it has " + prop.numKeys + " keyframes: set values with keyframe ops or pass a time"); } catch (eK) {}
+    try {
+        // if/else, not a ternary chain: ExtendScript parses those left-associatively.
+        var t = prop.propertyValueType;
+        var dims = 0;
+        if (t === PropertyValueType.ThreeD || t === PropertyValueType.ThreeD_SPATIAL) dims = 3;
+        else if (t === PropertyValueType.TwoD || t === PropertyValueType.TwoD_SPATIAL) dims = 2;
+        else if (t === PropertyValueType.COLOR) dims = 4;
+        else if (t === PropertyValueType.OneD) dims = 1;
+        if (dims > 1 && !(value instanceof Array)) parts.push("expects an array of " + dims + " numbers");
+        if (dims === 1 && value instanceof Array) parts.push("expects a single number");
+    } catch (eD) {}
+    if (value !== undefined) parts.push("got " + AE._jsonText(value));
+    return msg + (parts.length ? " [" + parts.join("; ") + "]" : "");
+};
+
+// ---------- Environment light source ----------
+// LightLayer.lightSource (24.3; any 2D layer since 25.2) takes a Layer OBJECT
+// of the same comp. Strings and indexes are refused ("... is not of the
+// correct type"), and a 3D layer is refused ("Invalid light source
+// specified"). "Light Options > Source" (ADBE Light Env Atom) is an empty
+// group, so property.set cannot reach it either.
+
+/**
+ * Resolve `spec` to a layer of `comp` to light with. Accepted forms:
+ *   number / { id }       a layer of the comp (index / stable id)
+ *   string                a layer name; if no layer has it, a project item name
+ *   { item: id|name }     a footage or comp item, added to the comp as a layer
+ * Returns { layer, added } or { error }.
+ */
+AE.resolveLightSourceLayer = function (comp, spec) {
+    var isItemRef = spec !== null && typeof spec === "object" && !(spec instanceof Array) && spec.item !== undefined;
+    if (!isItemRef) {
+        var l = AE.findLayerInComp(comp, spec);
+        if (l) return { layer: l, added: false };
+        if (typeof spec !== "string") return { error: "no layer matching " + AE._jsonText(spec) + " in comp '" + comp.name + "'" };
+    }
+    var item = AE.findItem(isItemRef ? spec.item : spec);
+    if (!item) return { error: "no layer or project item matching " + AE._jsonText(isItemRef ? spec.item : spec) };
+    if (!(item instanceof FootageItem) && !(item instanceof CompItem)) return { error: "'" + item.name + "' is a " + AE.itemTypeName(item) + "; a light source must be footage (HDR/EXR/image/video) or a comp" };
+    if (item === comp) return { error: "a comp cannot light itself" };
+    var added = comp.layers.add(item);
+    try { added.moveToEnd(); } catch (eMv) {}
+    return { layer: added, added: true };
+};
+
+/**
+ * Point an environment light at a source. opts.hide (default true) switches a
+ * layer this call ADDED to video-off so it only lights (and reflects), never
+ * draws. opts.makeEnvironment (default true) switches the light type first.
+ */
+AE.setLightSource = function (light, spec, opts) {
+    opts = opts || {};
+    if (!(light instanceof LightLayer)) return { ok: false, error: "'" + light.name + "' is not a light layer" };
+    var comp = light.containingComp;
+    var env;
+    try { env = LightType.ENVIRONMENT; } catch (eEnv) {}
+    if (env === undefined) return { ok: false, error: "environment lights need AE 24.3+" };
+    if (light.lightType !== env) {
+        if (opts.makeEnvironment === false) return { ok: false, error: "'" + light.name + "' is not an environment light (pass makeEnvironment: true to switch it)" };
+        light.lightType = env;
+    }
+    if (spec === null) {
+        try { light.lightSource = null; } catch (eClr) { return { ok: false, error: "could not clear the light source: " + AE.errText(eClr) }; }
+        return { ok: true, light: light.name, source: null };
+    }
+    var r = AE.resolveLightSourceLayer(comp, spec);
+    if (r.error) return { ok: false, error: r.error };
+    var src = r.layer;
+    if (src === light) return { ok: false, error: "a light cannot be its own source" };
+    var was3d = false;
+    try { was3d = src.threeDLayer === true; } catch (e3) {}
+    if (was3d) {
+        if (!r.added) return { ok: false, error: "source layer '" + src.name + "' is 3D; environment light sources must be 2D layers (switch its 3D off, or pass { item } to add the footage as a new 2D layer)" };
+        src.threeDLayer = false;
+    }
+    try {
+        light.lightSource = src;
+    } catch (eSet) {
+        if (r.added) { try { src.remove(); } catch (eRm) {} }
+        return { ok: false, error: "lightSource refused '" + src.name + "': " + AE.errText(eSet) };
+    }
+    if (r.added && opts.hide !== false) { try { src.enabled = false; } catch (eHide) {} }
+    var out = {
+        ok: true,
+        light: light.name,
+        source: { name: src.name, index: src.index, id: AE.safeGet(function () { return src.id; }, null), enabled: src.enabled },
+        added: r.added
+    };
+    var rd = AE.safeGet(function () { return comp.renderer; }, null);
+    if (rd !== "ADBE Calder") out.warning = "comp '" + comp.name + "' uses renderer " + rd + "; environment lights render only with Advanced 3D (comp.set_renderer advanced3d)";
+    return out;
+};
+
+/** The light-source layer of a light, or null (also null when unset or unsupported). */
+AE.lightSourceLayer = function (light) {
+    try { var s = light.lightSource; return (s && s.index) ? s : null; } catch (e) { return null; }
+};
+
 // ---------- Basic serialization ----------
 
 // Canonical item type label. An if/else chain, NOT a chained ternary:
@@ -402,15 +710,18 @@ AE.serializeLayerSummary = function (layer) {
         parentIndex: layer.parent ? layer.parent.index : null,
         label: layer.label
     };
-    if (layer instanceof AVLayer) {
-        out.width = layer.width;
-        out.height = layer.height;
-        out.hasVideo = layer.hasVideo;
-        out.hasAudio = layer.hasAudio;
-        out.threeDLayer = layer.threeDLayer;
-        out.sourceId = (layer.source && layer.source.id) ? layer.source.id : null;
-        out.sourceName = layer.source ? layer.source.name : null;
+    if (AE.isAVLayer(layer)) {
+        out.width = AE.safeGet(function () { return layer.width; }, null);
+        out.height = AE.safeGet(function () { return layer.height; }, null);
+        out.hasVideo = AE.safeGet(function () { return layer.hasVideo; }, null);
+        out.hasAudio = AE.safeGet(function () { return layer.hasAudio; }, null);
+        out.threeDLayer = AE.safeGet(function () { return layer.threeDLayer; }, null);
+        // Text/shape/mesh layers have no source item; a 3D model's source is its GLB footage.
+        var lsrc = AE.safeGet(function () { return layer.source; }, null);
+        out.sourceId = (lsrc && lsrc.id) ? lsrc.id : null;
+        out.sourceName = lsrc ? lsrc.name : null;
     }
+    if (type === "ParametricMeshLayer") out.meshType = AE.meshTypeName(layer);
     if (layer instanceof TextLayer) {
         try {
             var doc = layer.property("Source Text").value;
@@ -710,7 +1021,10 @@ AE.serializePropertyGroup = function (group, depth, maxDepth, opts) {
         groups: []
     };
     // The eyeball on effects, shape groups, text animators, layer styles.
-    try { if (group.canSetEnabled) out.enabled = group.enabled; } catch (eEn) {}
+    // A shape group's Material Options never has one in the UI; its
+    // canSetEnabled only reflects whether the layer was 3D when the group
+    // was made.
+    try { if (group.canSetEnabled && group.matchName !== "ADBE Vector Materials Group") out.enabled = group.enabled; } catch (eEn) {}
     // Mask mode/invert/etc. are attributes of the mask group, not properties.
     try { if (group.isMask) out.mask = AE.serializeMaskAttrs(group); } catch (eMa) {}
     if (depth >= maxDepth) {
@@ -783,7 +1097,7 @@ AE._readAttrs = function (obj, names, out) {
 AE.serializeLayerAttrs = function (layer) {
     var a = AE._readAttrs(layer, AE.LAYER_ATTRS, {});
     try { a.nullLayer = layer.nullLayer; } catch (eNl) {}
-    if (layer instanceof AVLayer) {
+    if (AE.isAVLayer(layer)) {
         AE._readAttrs(layer, AE.AVLAYER_ATTRS, a);
         // AE 23+: the matte is any layer, not just the one above.
         try {
@@ -796,6 +1110,16 @@ AE.serializeLayerAttrs = function (layer) {
     }
     if (layer instanceof LightLayer) {
         try { a.lightType = layer.lightType; } catch (eLt) {}
+        // Environment light source: a layer of the same comp, by index (the
+        // importer's per-comp layer map) with the name as a cross-check.
+        var ls = AE.lightSourceLayer(layer);
+        if (ls) { a.lightSourceIndex = ls.index; a.lightSourceName = ls.name; }
+    }
+    if (AE.isMeshLayer(layer)) {
+        // Decides which "Mesh Options"/"Bevel Options" groups are live; the
+        // importer creates the mesh with it (addParametricMesh).
+        var mt = AE.meshTypeName(layer);
+        if (mt) a.parametricMeshType = mt;
     }
     return a;
 };
@@ -806,8 +1130,33 @@ AE.serializeCompAttrs = function (comp) {
 
 // Top-level layer groups outside Transform/Effects/Masks/Text/Contents that
 // hold real data. Layer Styles only counts once a style has been added.
+// Order is import order: the mesh option groups (geometry) come before the
+// material and compositing groups that shade it.
 AE.EXTRA_LAYER_GROUPS = ["ADBE Camera Options Group", "ADBE Light Options Group",
-    "ADBE Extrsn Options Group", "ADBE Plane Options Group", "ADBE Layer Styles"];
+    "ADBE Extrsn Options Group", "ADBE Plane Options Group",
+    "ADBE CubeMeshOptionsSGrp", "ADBE CubeBevelOptionsSGrp", "ADBE SphereMeshOptionsSGrp",
+    "ADBE PlaneMeshOptionsSGrp", "ADBE CylinderMeshOptionsSGrp", "ADBE CylinderBevelOptionsSGrp",
+    "ADBE ConeMeshOptionsSGrp", "ADBE ConeBevelBevelSGrp", "ADBE TorusMeshOptionsSGrp",
+    "ADBE ModelAnimOptionsSGrp", "ADBE3D Para Mat Parade", "ADBE3D Material Parade",
+    "ADBE Displacement Options", "ADBE Compositing Options Group", "ADBE Layer Styles"];
+
+/**
+ * Whether an extra group carries live data on this layer (verified on AE 26.5
+ * by writing values back). Skipped groups are hidden there — their values
+ * cannot be read back into AE, so exporting them would only add noise:
+ *   - Geometry Options (extrusion, plane curvature): 3D text/shape/footage only,
+ *     never meshes or models;
+ *   - mesh/bevel option groups: only the current mesh type's;
+ *   - Compositing Options, Displacement, Material Assignment: meshes and models.
+ */
+AE.extraGroupApplies = function (layer, matchName, is3d, isA3dGeometry) {
+    if (matchName === "ADBE Extrsn Options Group" || matchName === "ADBE Plane Options Group") return is3d && !isA3dGeometry;
+    if (AE.isMeshOptionGroup(matchName)) return AE.meshGroupActive(layer, matchName) === true;
+    if (matchName === "ADBE Compositing Options Group" || matchName === "ADBE Displacement Options" ||
+        matchName === "ADBE3D Para Mat Parade" || matchName === "ADBE3D Material Parade" ||
+        matchName === "ADBE ModelAnimOptionsSGrp") return isA3dGeometry;
+    return true;
+};
 
 /**
  * Every style group (dropShadow/enabled, frameFX/enabled, ...) always exists
@@ -873,6 +1222,8 @@ AE.serializeLayerFull = function (layer, opts) {
     out.parent = layer.parent ? { index: layer.parent.index, name: layer.parent.name } : null;
     out.attrs = AE.serializeLayerAttrs(layer);
     var summary = opts.detail === "summary";
+    var isA3dGeometry = AE.isMeshLayer(layer) || AE.isModelLayer(layer);
+    var is3d = AE.safeGet(function () { return layer.threeDLayer === true; }, false);
     var walkOpts = summary ? { onlyModified: true } : null;
     function collapse(g) { return (summary && AE.propertyGroupIsEmpty(g)) ? null : g; }
     // Property tree (Transform + Effects + Masks + Text + Contents + Material Options + Audio)
@@ -896,21 +1247,25 @@ AE.serializeLayerFull = function (layer, opts) {
             try { out.contentsGroup = AE.serializePropertyGroup(layer.property("Contents"), 0, 16, walkOpts); } catch (eCt) { out.contentsGroup = null; }
         }
         // Material options (3D layers)
-        if (layer instanceof AVLayer && layer.threeDLayer) {
+        // Meshes and 3D models keep their material in "Material Assignment"
+        // and their shadow switches in "Compositing Options" (extra groups
+        // below); their Material Options group is hidden.
+        if (AE.isAVLayer(layer) && layer.threeDLayer && !isA3dGeometry) {
             try {
-                var mat = layer.property("Material Options");
+                var mat = layer.property("ADBE Material Options Group");
                 out.materialOptionsGroup = mat ? collapse(AE.serializePropertyGroup(mat, 0, 6, walkOpts)) : null;
             } catch (eMo) { out.materialOptionsGroup = null; }
         }
         // Audio (if layer has audio)
-        if (layer instanceof AVLayer && layer.hasAudio) {
+        if (AE.isAVLayer(layer) && AE.safeGet(function () { return layer.hasAudio; }, false)) {
             try {
                 var au = layer.property("Audio");
                 out.audioGroup = au ? collapse(AE.serializePropertyGroup(au, 0, 6, walkOpts)) : null;
             } catch (eAu) { out.audioGroup = null; }
         }
-        // Time Remap (AVLayer only, must be enabled)
-        if (layer instanceof AVLayer) {
+        // Time Remap (AV layers only, must be enabled). On a 3D model it drives
+        // the glTF animation clip.
+        if (AE.isAVLayer(layer)) {
             try {
                 out.timeRemapEnabled = !!layer.timeRemapEnabled;
                 if (layer.timeRemapEnabled) {
@@ -926,10 +1281,11 @@ AE.serializeLayerFull = function (layer, opts) {
                 out.markers = AE.serializeProperty(marker);
             }
         } catch (eMk) { /* ignore */ }
-        // Camera/Light Options, 3D geometry, Layer Styles.
+        // Camera/Light Options, 3D geometry and materials, Layer Styles.
         var extra = [];
         for (var xg = 0; xg < AE.EXTRA_LAYER_GROUPS.length; xg++) {
             var xmn = AE.EXTRA_LAYER_GROUPS[xg];
+            if (!AE.extraGroupApplies(layer, xmn, is3d, isA3dGeometry)) continue;
             var grp = null;
             try { grp = layer.property(xmn); } catch (eXg) {}
             if (!grp) continue;

@@ -206,6 +206,16 @@ export const doTool = defineTool({
 
     const { result: opResult, context } = result.result as { result: unknown; context: unknown };
 
+    // Node-side follow-up (render.frame waits for its PNG to land; batch.run
+    // runs its children's). It may turn the result into a reported failure.
+    if (op.afterJsx) {
+      try {
+        await op.afterJsx(opResult, validated.value);
+      } catch {
+        /* the JSX result stands */
+      }
+    }
+
     // Operations report application-level failure by RETURNING
     // `{ ok: false, error }` — the script ran fine, so the transport reports
     // success. batch.run rides the same path: it aggregates its children's

@@ -22,11 +22,11 @@ Read-only project/comp/layer introspection.
 
 Save, JSON export, and JSON import of the whole project.
 
-| Tool                     | Description                                                                                                                        |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `ae_save_project`        | Save the project.                                                                                                                  |
-| `ae_project_export_json` | Serialize the entire project to JSON (folders, comps, layers, keyframes, effects, shapes, markers, time remap, solids, file refs). |
-| `ae_project_import_json` | Rebuild the project from JSON (produced by ae_project_export_json).                                                                |
+| Tool                     | Description                                                                                                                                                                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ae_save_project`        | Save the project.                                                                                                                                                                                                                                                                                                         |
+| `ae_project_export_json` | Serialize the entire project to JSON (folders, comps, layers, keyframes, effects, shapes, markers, time remap, solids, footage with interpretation, sequences, proxies, project settings; Advanced 3D: 3D models, parametric meshes with mesh/bevel options, materials, extrusion and bevels, environment-light sources). |
+| `ae_project_import_json` | Rebuild the project from JSON (produced by ae_project_export_json).                                                                                                                                                                                                                                                       |
 
 ## Render
 

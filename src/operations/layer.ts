@@ -1,6 +1,6 @@
 // Layer operations — create, delete, duplicate, set properties.
 
-import { registerOp, jsxVal, jsxCompPreamble, jsxCompLayerPreamble } from "../registry.js";
+import { registerOp, jsxVal, jsxFail, jsxCompPreamble, jsxCompLayerPreamble } from "../registry.js";
 
 registerOp({
   name: "layer.create_solid",
@@ -185,16 +185,83 @@ registerOp({
 registerOp({
   name: "layer.create_camera",
   category: "layer",
-  description: "Create a camera layer.",
+  description:
+    "Create a two-node camera. focalLength is in mm on a 36 mm film back (Zoom = compWidth × focalLength / 36; 85–170 mm reads as calm product framing, 24–35 mm as energy); zoom sets the Zoom property in px directly. " +
+    "position/pointOfInterest are comp-space [x,y,z] (default: AE's camera, looking at the comp center). depthOfField/focusDistance/aperture set the DOF options.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     { name: "name", type: "string", description: "Layer name", required: false, default: "Camera" },
+    {
+      name: "focalLength",
+      type: "number",
+      description: "Lens in mm (36 mm film width). Mutually exclusive with zoom.",
+      required: false,
+    },
+    { name: "zoom", type: "number", description: "Camera Zoom in px", required: false },
+    { name: "position", type: "array", description: "[x,y,z] camera position", required: false },
+    {
+      name: "pointOfInterest",
+      type: "array",
+      description: "[x,y,z] point the camera looks at",
+      required: false,
+    },
+    {
+      name: "depthOfField",
+      type: "boolean",
+      description: "Depth of Field on/off",
+      required: false,
+    },
+    {
+      name: "focusDistance",
+      type: "number",
+      description: "Focus Distance in px (the distance to the subject)",
+      required: false,
+    },
+    { name: "aperture", type: "number", description: "Aperture in px", required: false },
   ],
   toJsx(args) {
+    if (args.focalLength !== undefined && args.zoom !== undefined) {
+      return jsxFail("pass focalLength OR zoom, not both");
+    }
+    if (args.focalLength !== undefined && !((args.focalLength as number) > 0)) {
+      return jsxFail("focalLength must be > 0 mm");
+    }
     return `
             ${jsxCompPreamble(args)}
             var _layer = _comp.layers.addCamera(${jsxVal(args.name ?? "Camera")}, [_comp.width/2, _comp.height/2]);
-            return { ok: true, index: _layer.index, name: _layer.name };
+            var _w = [];
+            var _opt = _layer.property("ADBE Camera Options Group");
+            var _xf = _layer.property("ADBE Transform Group");
+            function _set(p, v, what) {
+                try { AE.writeValue(p, v); } catch (e) { _w.push(what + ": " + AE.describeSetError(p, e, v)); }
+            }
+            var _fl = ${jsxVal(args.focalLength ?? null)};
+            var _zm = ${jsxVal(args.zoom ?? null)};
+            if (_fl !== null) _zm = _comp.width * _fl / 36;
+            if (_zm !== null) _set(_opt.property("ADBE Camera Zoom"), _zm, "zoom");
+            var _pos = ${jsxVal(args.position ?? null)};
+            var _poi = ${jsxVal(args.pointOfInterest ?? null)};
+            // A camera's Point of Interest is the Anchor Point stream.
+            if (_poi !== null) _set(_xf.property("ADBE Anchor Point"), _poi, "pointOfInterest");
+            if (_pos !== null) _set(_xf.property("ADBE Position"), _pos, "position");
+            var _dof = ${jsxVal(args.depthOfField ?? null)};
+            if (_dof !== null) _set(_opt.property("ADBE Camera Depth of Field"), _dof ? 1 : 0, "depthOfField");
+            var _fd = ${jsxVal(args.focusDistance ?? null)};
+            if (_fd !== null) _set(_opt.property("ADBE Camera Focus Distance"), _fd, "focusDistance");
+            var _ap = ${jsxVal(args.aperture ?? null)};
+            if (_ap !== null) _set(_opt.property("ADBE Camera Aperture"), _ap, "aperture");
+            var _zoomNow = _opt.property("ADBE Camera Zoom").value;
+            var _out = {
+                ok: _w.length === 0,
+                index: _layer.index,
+                name: _layer.name,
+                zoom: _zoomNow,
+                focalLength: _zoomNow * 36 / _comp.width,
+                position: AE.valueToJson(_xf.property("ADBE Position").value),
+                pointOfInterest: AE.valueToJson(_xf.property("ADBE Anchor Point").value)
+            };
+            if (_w.length) { _out.error = _w.join("; "); _out.warnings = _w; }
+            return _out;
         `;
   },
 });
@@ -213,6 +280,13 @@ registerOp({
         "spot|parallel|point|ambient|environment (environment needs AE 24.3+ / Advanced 3D)",
       required: false,
       default: "spot",
+    },
+    {
+      name: "source",
+      type: "any",
+      description:
+        "Environment lights only: what it lights with — a 2D layer (index/name/{id}) or a project item ({ item: id|name }, e.g. an imported .hdr), added as a hidden 2D layer. Same as light.set_source.",
+      required: false,
     },
   ],
   toJsx(args) {
@@ -233,7 +307,19 @@ registerOp({
             var _layer = _comp.layers.addLight(${jsxVal(args.name ?? "Light")}, [_comp.width/2, _comp.height/2]);
             var _applied = null;
             try { _layer.lightType = _ltMap[_ltArg]; _applied = _ltArg; } catch (eLt) {}
-            return { ok: true, index: _layer.index, name: _layer.name, lightType: _applied };
+            var _out = { ok: true, index: _layer.index, name: _layer.name, lightType: _applied };
+            var _srcArg = ${jsxVal(args.source ?? null)};
+            if (_srcArg !== null) {
+                if (_ltArg !== "environment") return { ok: false, error: "source applies to environment lights only (lightType 'environment')", index: _layer.index, name: _layer.name };
+                var _sr = AE.setLightSource(_layer, _srcArg, { hide: true, makeEnvironment: true });
+                if (!_sr.ok) { _out.ok = false; _out.error = "light created, source not set: " + _sr.error; return _out; }
+                _out.source = _sr.source;
+                _out.sourceAdded = _sr.added;
+                if (_sr.warning) _out.warning = _sr.warning;
+                // The source layer may have been added on top: report the light's index now.
+                _out.index = _layer.index;
+            }
+            return _out;
         `;
   },
 });
@@ -583,7 +669,7 @@ registerOp({
       name: "props",
       type: "object",
       description:
-        "Object with keys to set, e.g. { name: 'foo', enabled: false, label: 5, threeDLayer: true }",
+        "Object with keys to set, e.g. { name: 'foo', enabled: false, label: 5, threeDLayer: true }. lightSource takes a layer index/name/{id} or { item } (see light.set_source).",
       required: true,
     },
   ],
@@ -591,6 +677,14 @@ registerOp({
     const props = (args.props ?? {}) as Record<string, unknown>;
     const lines: string[] = [];
     for (const [k, v] of Object.entries(props)) {
+      // LightLayer.lightSource takes a Layer object, which JSON cannot carry:
+      // resolve it through the same path as light.set_source.
+      if (k === "lightSource") {
+        lines.push(
+          `try { var _ls = AE.setLightSource(_l, ${jsxVal(v)}, { hide: true, makeEnvironment: true }); if (!_ls.ok) _w.push("lightSource: " + _ls.error); } catch (e) { _w.push("lightSource: " + AE.errText(e)); }`,
+        );
+        continue;
+      }
       lines.push(
         `try { _l[${jsxVal(k)}] = AE.coerceLayerPropValue(${jsxVal(k)}, ${jsxVal(v)}); } catch (e) { _w.push(${jsxVal(k)} + ": " + AE.errText(e)); }`,
       );

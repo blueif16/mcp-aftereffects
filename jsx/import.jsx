@@ -206,6 +206,7 @@ AE.importProject = function (doc, opts) {
     for (var pf = 1; pf <= proj.numItems; pf++) {
         if (proj.item(pf) instanceof FolderItem) preexistingFolders[String(proj.item(pf).id)] = true;
     }
+    var deferredAll = [];   // { layer, name, comp, list } — hidden-at-the-time writes, retried later
     var nullSourceIds = {}; // sources of null layers, recreated with addNull instead
     var nullRebuilt = [];   // { source: new null source, specSourceId } — refiled in pass 7
     var itemSpecById = {};
@@ -235,6 +236,15 @@ AE.importProject = function (doc, opts) {
                     newLayer = compDst.layers.addLight(lspec.name || "Light", [compDst.width / 2, compDst.height / 2]);
                     // Light type decides which Light Options exist, so it goes first.
                     try { if (lspec.attrs && lspec.attrs.lightType !== undefined) newLayer.lightType = lspec.attrs.lightType; } catch (eLt) {}
+                } else if (lspec.type === "ParametricMeshLayer") {
+                    // Mesh type first: it decides which option groups are live.
+                    var mtName = (lspec.attrs && lspec.attrs.parametricMeshType) || lspec.meshType || "cube";
+                    var mtEnum = AE.meshTypeEnum(mtName);
+                    if (typeof compDst.layers.addParametricMesh !== "function" || mtEnum === undefined) {
+                        warn("parametric mesh '" + lspec.name + "' (" + mtName + ") needs AE 26.3+; skipped");
+                        continue;
+                    }
+                    newLayer = compDst.layers.addParametricMesh(lspec.name || "Mesh", mtEnum);
                 } else if (lspec.attrs && lspec.attrs.nullLayer) {
                     // nullLayer is read-only: a layer added from the null's solid
                     // source would come back as a visible solid.
@@ -253,26 +263,38 @@ AE.importProject = function (doc, opts) {
                         }
                         newLayer = compDst.layers.add(src);
                     } else {
-                        warn("AVLayer '" + lspec.name + "' has no sourceId; skipped");
+                        warn((lspec.type || "AVLayer") + " '" + lspec.name + "' has no sourceId (exported by a kumo older than schema v5?); skipped");
                         continue;
                     }
                 }
                 if (!newLayer) continue;
                 binding.byIndex[lspec.index] = newLayer;
+                // Writes refused because the property is hidden right now (its
+                // visibility depends on values or layers applied later: falloff
+                // type, light source, 3D switch). Retried after the layer, and
+                // again after pass 6.
+                var deferred = [];
+                deferredAll.push({ layer: newLayer, name: lspec.name, comp: spec.name, list: deferred });
                 if (lspec.name) newLayer.name = lspec.name;
                 // enabled/solo/locked are applied in the final pass: a locked
                 // layer refuses every later write, and solo throws on a
                 // disabled layer (e.g. a track matte).
                 if (lspec.shy !== undefined) newLayer.shy = lspec.shy;
                 if (lspec.label !== undefined) newLayer.label = lspec.label;
-                if (lspec.startTime !== undefined) newLayer.startTime = lspec.startTime;
-                if (lspec.inPoint !== undefined) newLayer.inPoint = lspec.inPoint;
-                if (lspec.outPoint !== undefined) newLayer.outPoint = lspec.outPoint;
+                // Stretch first: it rescales in/out around the start time, so
+                // setting it after them moved the out point (80% stretch on a
+                // 3D model clip: 23.5 s came back as 18.7 s).
                 if (lspec.stretch !== undefined && lspec.stretch !== 100) {
                     try { newLayer.stretch = lspec.stretch; } catch (eSt) {}
                 }
-                if (lspec.threeDLayer !== undefined && newLayer instanceof AVLayer) {
-                    try { newLayer.threeDLayer = lspec.threeDLayer; } catch (e3d) {}
+                if (lspec.startTime !== undefined) newLayer.startTime = lspec.startTime;
+                if (lspec.inPoint !== undefined) newLayer.inPoint = lspec.inPoint;
+                if (lspec.outPoint !== undefined) newLayer.outPoint = lspec.outPoint;
+                // The 3D switch before attrs and every property tree: Geometry
+                // and Material Options of text/shape layers only accept values
+                // once the layer is 3D (they are hidden on a 2D layer).
+                if (lspec.threeDLayer !== undefined && lspec.threeDLayer !== null && AE.isAVLayer(newLayer)) {
+                    try { if (newLayer.threeDLayer !== lspec.threeDLayer) newLayer.threeDLayer = lspec.threeDLayer; } catch (e3d) { warn("3D switch not applied on '" + lspec.name + "': " + AE.errText(e3d)); }
                 }
                 // Switches (blend, adjustment, quality, motion blur, 3D per char...)
                 // before the property trees: threeDPerChar changes what the
@@ -280,7 +302,7 @@ AE.importProject = function (doc, opts) {
                 if (lspec.attrs) AE.applyLayerAttrs(newLayer, lspec.attrs);
                 // Apply transform properties
                 if (lspec.transformGroup) {
-                    AE.applyPropertyGroup(newLayer.property("Transform"), lspec.transformGroup, warn);
+                    AE.applyPropertyGroup(newLayer.property("Transform"), lspec.transformGroup, warn, deferred);
                 }
                 // Apply effects (create each effect by matchName, then fill values)
                 if (lspec.effectsGroup && lspec.effectsGroup.groups) {
@@ -312,7 +334,7 @@ AE.importProject = function (doc, opts) {
                 }
                 // Apply text source document / styling
                 if (lspec.textGroup && newLayer instanceof TextLayer) {
-                    AE.applyPropertyGroup(newLayer.property("Text"), lspec.textGroup, warn);
+                    AE.applyPropertyGroup(newLayer.property("Text"), lspec.textGroup, warn, deferred);
                 }
                 // Shape layer contents — recursively recreate shape groups
                 if (lspec.contentsGroup && newLayer instanceof ShapeLayer) {
@@ -324,7 +346,7 @@ AE.importProject = function (doc, opts) {
                     }
                 }
                 // Time Remap — must be enabled BEFORE applying keyframes
-                if (lspec.timeRemapEnabled && newLayer instanceof AVLayer) {
+                if (lspec.timeRemapEnabled && AE.isAVLayer(newLayer)) {
                     try {
                         newLayer.timeRemapEnabled = true;
                         if (lspec.timeRemapProperty) {
@@ -335,15 +357,15 @@ AE.importProject = function (doc, opts) {
                     }
                 }
                 // Material Options (3D layers)
-                if (lspec.materialOptionsGroup && newLayer instanceof AVLayer && newLayer.threeDLayer) {
+                if (lspec.materialOptionsGroup && AE.isAVLayer(newLayer) && newLayer.threeDLayer) {
                     try {
-                        AE.applyPropertyGroup(newLayer.property("Material Options"), lspec.materialOptionsGroup, warn);
-                    } catch (eMat) { /* ignore */ }
+                        AE.applyPropertyGroup(newLayer.property("ADBE Material Options Group"), lspec.materialOptionsGroup, warn, deferred);
+                    } catch (eMat) { warn("Material Options restore failed for '" + lspec.name + "': " + AE.errText(eMat)); }
                 }
                 // Audio
-                if (lspec.audioGroup && newLayer instanceof AVLayer) {
+                if (lspec.audioGroup && AE.isAVLayer(newLayer)) {
                     try {
-                        AE.applyPropertyGroup(newLayer.property("Audio"), lspec.audioGroup, warn);
+                        AE.applyPropertyGroup(newLayer.property("Audio"), lspec.audioGroup, warn, deferred);
                     } catch (eAud) { /* ignore */ }
                 }
                 // Layer markers
@@ -359,11 +381,12 @@ AE.importProject = function (doc, opts) {
                         try {
                             var xt = newLayer.property(xs.matchName);
                             if (xt && xs.matchName === "ADBE Layer Styles") AE.ensureLayerStyles(newLayer, xs, warn);
-                            if (xt) AE.applyPropertyGroup(xt, xs, warn);
+                            if (xt) AE.applyPropertyGroup(xt, xs, warn, deferred);
                             else warn("layer '" + lspec.name + "' has no " + xs.matchName + " group; skipped");
                         } catch (eXg) { warn(xs.matchName + " restore failed for '" + lspec.name + "': " + AE.errText(eXg)); }
                     }
                 }
+                AE.retryDeferred(deferred);
             } catch (eLayer) {
                 warn("failed to create layer '" + (lspec.name || "?") + "' in comp '" + spec.name + "': " + AE.errText(eLayer));
             }
@@ -425,6 +448,17 @@ AE.importProject = function (doc, opts) {
                 warn("track matte restore failed for '" + ls.name + "': " + AE.errText(eTm));
             }
         }
+        // Environment light sources: every layer of the comp exists now.
+        for (lk = 0; lk < spec2.layers.length; lk++) {
+            ls = spec2.layers[lk];
+            if (!ls.attrs || ls.attrs.lightSourceIndex == null) continue;
+            child = byIdx[ls.index];
+            var srcLayer = byIdx[ls.attrs.lightSourceIndex];
+            if (!child) continue;
+            if (!srcLayer) { warn("light source of '" + ls.name + "' (layer " + ls.attrs.lightSourceIndex + ") was not created"); continue; }
+            try { child.lightSource = srcLayer; }
+            catch (eLs) { warn("light source restore failed for '" + ls.name + "': " + AE.errText(eLs)); }
+        }
         for (lk = 0; lk < spec2.layers.length; lk++) {
             ls = spec2.layers[lk];
             child = byIdx[ls.index];
@@ -432,6 +466,20 @@ AE.importProject = function (doc, opts) {
             try { if (ls.enabled !== undefined && child.enabled !== ls.enabled) child.enabled = ls.enabled; } catch (eEn) { warn("enabled restore failed for '" + ls.name + "': " + AE.errText(eEn)); }
             try { if (ls.solo === true) child.solo = true; } catch (eSo) { warn("solo restore failed for '" + ls.name + "': " + AE.errText(eSo)); }
             try { if (ls.locked === true) child.locked = true; } catch (eLk) {}
+        }
+    }
+
+    // Hidden-at-the-time writes, now that light sources, mattes and parents
+    // are in place. What is still hidden only matters when its value differs
+    // from what the layer holds (a hidden default is not data).
+    for (var da = 0; da < deferredAll.length; da++) {
+        var dEntry = deferredAll[da];
+        AE.retryDeferred(dEntry.list);
+        for (var dq = 0; dq < dEntry.list.length; dq++) {
+            var dItem = dEntry.list[dq];
+            if (!AE._specMatchesProp(dItem.prop, dItem.pspec)) {
+                warn("'" + dItem.pspec.matchName + "' on layer '" + dEntry.name + "' in comp '" + dEntry.comp + "' is hidden there; exported value " + AE._jsonText(dItem.pspec.value) + " not restored (current " + AE._jsonText(AE.safeGet(function () { return AE.valueToJson(dItem.prop.value); }, null)) + ")");
+            }
         }
     }
 
@@ -552,7 +600,7 @@ AE.importShapeContents = function (target, spec, warn) {
 // does not have them yet: text animators and their properties, range
 // selectors, layer styles. Effects, masks and shape contents are created by
 // their own import passes before this runs.
-AE.applyPropertyGroup = function (target, spec, warn) {
+AE.applyPropertyGroup = function (target, spec, warn, deferred) {
     if (!target || !spec) return;
     // Mask attributes first: rotoBezier changes how the path is read.
     if (spec.mask) AE.applyMaskAttrs(target, spec.mask);
@@ -577,7 +625,7 @@ AE.applyPropertyGroup = function (target, spec, warn) {
                 // Some properties (like Separate Dimensions placeholders) may not exist on all layer types
                 continue;
             }
-            try { AE.applyPropertyValue(prop, pspec); }
+            try { AE.applyPropertyValue(prop, pspec, deferred); }
             catch (eAp) { if (warn) warn("failed to apply property '" + pspec.name + "': " + AE.errText(eAp)); }
         }
     }
@@ -602,7 +650,7 @@ AE.applyPropertyGroup = function (target, spec, warn) {
                 continue;
             }
             if (indexed && gspec.name && sub.name !== gspec.name) { try { sub.name = gspec.name; } catch (eNm) {} }
-            AE.applyPropertyGroup(sub, gspec, warn);
+            AE.applyPropertyGroup(sub, gspec, warn, deferred);
         }
     }
     // The eyeball last, so values above are written while it is on.
@@ -688,7 +736,7 @@ AE.applyAttrs = function (obj, attrs, names) {
 
 AE.applyLayerAttrs = function (layer, attrs) {
     AE.applyAttrs(layer, attrs, AE.LAYER_ATTRS);
-    if (layer instanceof AVLayer) {
+    if (AE.isAVLayer(layer)) {
         // trackMatteType is applied with the matte layer in pass 6.
         var names = [];
         for (var i = 0; i < AE.AVLAYER_ATTRS.length; i++) if (AE.AVLAYER_ATTRS[i] !== "trackMatteType") names.push(AE.AVLAYER_ATTRS[i]);
@@ -759,7 +807,7 @@ AE.unwrapValue = function (val, existingTemplate) {
     return val;
 };
 
-AE.applyPropertyValue = function (prop, pspec) {
+AE.applyPropertyValue = function (prop, pspec, deferred) {
     // Separated Position: switch it on and let the X/Y/Z followers (which
     // come next in the same group) carry the values and keys.
     if (pspec.dimensionsSeparated) {
@@ -769,8 +817,19 @@ AE.applyPropertyValue = function (prop, pspec) {
     var val = pspec.value;
     if (val !== null && val !== undefined) {
         var unwrapped = AE.unwrapValue(val, (val.__kind === "TextDocument") ? AE.safeGet(function () { return prop.value; }, null) : null);
-        if (unwrapped !== null && unwrapped !== undefined) {
-            try { prop.setValue(unwrapped); } catch (eSv) { /* some props are read-only; swallow */ }
+        if (unwrapped !== null && unwrapped !== undefined && !(pspec.keyframes && pspec.keyframes.length > 0)) {
+            // A value the new layer already holds is not written: setValue
+            // stores through float32, so re-writing e.g. the 89.9999923018046°
+            // orientation AE gives an imported GLB would round it and shift
+            // geometry edges by a pixel.
+            var already = (typeof val === "number" || val instanceof Array) && AE._sameValue(AE.safeGet(function () { return AE.valueToJson(prop.value); }, null), val);
+            if (!already) {
+                try { prop.setValue(unwrapped); } catch (eSv) {
+                    // Hidden right now (depends on a value or layer applied later):
+                    // queue for a retry. Other refusals (read-only) are swallowed.
+                    if (deferred && AE.isHiddenError(eSv)) { deferred.push({ prop: prop, pspec: pspec }); return; }
+                }
+            }
         }
     }
     // Keyframes
@@ -796,6 +855,7 @@ AE.applyPropertyValue = function (prop, pspec) {
             try {
                 prop.setValuesAtTimes(times, values);
             } catch (eKf) {
+                if (deferred && AE.isHiddenError(eKf)) { deferred.push({ prop: prop, pspec: pspec }); return; }
                 // Fallback: per-key
                 for (var kk = 0; kk < times.length; kk++) {
                     try { prop.setValueAtTime(times[kk], values[kk]); } catch (ePk) {}
@@ -826,6 +886,49 @@ AE.applyPropertyValue = function (prop, pspec) {
             prop.expressionEnabled = (pspec.expressionEnabled !== false);
         } catch (eEx) {}
     }
+};
+
+/**
+ * Re-apply writes that were refused as hidden. A write can unhide others
+ * (falloff type -> radius), so loop while progress is made. Entries that still
+ * fail stay in the list.
+ */
+AE.retryDeferred = function (list) {
+    if (!list || list.length === 0) return;
+    for (var round = 0; round < 4 && list.length > 0; round++) {
+        var still = [];
+        for (var i = 0; i < list.length; i++) {
+            var d = list[i];
+            var again = [];
+            try { AE.applyPropertyValue(d.prop, d.pspec, again); } catch (e) { again.push(d); }
+            if (again.length > 0) still.push(d);
+        }
+        var progressed = still.length < list.length;
+        list.length = 0;
+        for (var j = 0; j < still.length; j++) list.push(still[j]);
+        if (!progressed) break;
+    }
+};
+
+/** Exact-enough equality for numbers / number arrays (relative 1e-9): "the layer already holds this". */
+AE._sameValue = function (a, b) {
+    if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+    if (a instanceof Array && b instanceof Array) {
+        if (a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) if (!AE._sameValue(a[i], b[i])) return false;
+        return true;
+    }
+    return false;
+};
+
+/** True when a property already holds an exported (un-keyed) value — a hidden write that changes nothing. */
+AE._specMatchesProp = function (prop, pspec) {
+    if (pspec.keyframes && pspec.keyframes.length > 0) return false;
+    var cur = AE.safeGet(function () { return AE.valueToJson(prop.value); }, null);
+    var want = pspec.value;
+    if (want === null || want === undefined) return true;
+    if (typeof want === "object" && !(want instanceof Array)) return true; // TextDocument/Shape: not compared here
+    return AE._interpEqual(cur, want);
 };
 
 /** Remove keys whose time is not one of `times` (half-frame tolerance at 120fps). */

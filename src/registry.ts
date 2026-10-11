@@ -82,6 +82,13 @@ export interface Operation {
    * inside batch.run, which only knows how to inline ExtendScript.
    */
   run?(args: Record<string, unknown>, transport: AeTransport): Promise<unknown>;
+  /**
+   * Node-side follow-up on a successful JSX result, before it is reported —
+   * e.g. waiting for a file AE writes asynchronously after the script
+   * returns. May mutate `result` (set ok:false + error on failure). Runs for
+   * the op itself and, through batch.run, for each batch child.
+   */
+  afterJsx?(result: unknown, args: Record<string, unknown>): Promise<void>;
 }
 
 const operations = new Map<string, Operation>();
@@ -203,8 +210,11 @@ export function jsxPropertyLookup(pathArg: string = "_propPath"): string {
         var _node = _layer;
         for (var _pi = 0; _pi < ${pathArg}.length; _pi++) {
             var _next = null;
-            try { _next = _node.property(${pathArg}[_pi]); } catch (e) {}
-            if (!_next) return { ok: false, error: "property segment '" + ${pathArg}[_pi] + "' not found at depth " + _pi };
+            // AE.childProperty: matchName or display name; on parametric
+            // meshes the ambiguous "Mesh Options"/"Bevel Options" resolve to
+            // the current mesh type's group.
+            try { _next = AE.childProperty(_node, ${pathArg}[_pi]); } catch (e) {}
+            if (!_next) return { ok: false, error: "property segment '" + ${pathArg}[_pi] + "' not found at depth " + _pi + " (property.list shows what exists)" };
             _node = _next;
         }
     `;

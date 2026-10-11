@@ -12,7 +12,9 @@ export const projectExportTool = defineTool({
   title: "Export project JSON",
   description:
     "Serialize the entire project to JSON (folders, comps, layers, keyframes, effects, " +
-    "shapes, markers, time remap, solids, footage with interpretation, sequences, proxies, project settings). " +
+    "shapes, markers, time remap, solids, footage with interpretation, sequences, proxies, project settings; " +
+    "Advanced 3D: 3D models, parametric meshes with mesh/bevel options, materials, extrusion and bevels, " +
+    "environment-light sources). " +
     "Write to `outPath` or return inline. `relativeTo` makes footage paths under a directory relative.",
   group: "document",
   blockedInReadOnly: false,
@@ -41,9 +43,13 @@ export const projectExportTool = defineTool({
   },
   handler: async (args, transport) => {
     if (args.relativeTo !== undefined && !isAbsolutePath(args.relativeTo)) {
-      return errorResult("INVALID_ARGS", `relativeTo must be an absolute directory, got '${args.relativeTo}'`, {
-        hint: "Pass the media root as an absolute path, e.g. D:/studio-mirror/my-video.",
-      });
+      return errorResult(
+        "INVALID_ARGS",
+        `relativeTo must be an absolute directory, got '${args.relativeTo}'`,
+        {
+          hint: "Pass the media root as an absolute path, e.g. D:/studio-mirror/my-video.",
+        },
+      );
     }
     if (args.outPath) {
       const rejection = rejectedOutputPath(args.outPath);

@@ -36,6 +36,37 @@ registerOp({
   // The wrapper itself mutates nothing; each child is gated individually below,
   // so a batch of read-only operations stays usable under AE_MCP_READONLY.
   readOnly: true,
+  // Children's Node-side follow-ups (render.frame waits for its PNG), then the
+  // batch verdict is recounted: a child that fails there fails the batch.
+  async afterJsx(result, args) {
+    const r = result as {
+      ok?: boolean;
+      error?: string | null;
+      failed?: number;
+      results?: unknown[];
+    } | null;
+    if (!r || !Array.isArray(r.results) || !Array.isArray(args.ops)) return;
+    const ops = args.ops as Array<{ operation?: unknown; args?: unknown }>;
+    for (let i = 0; i < r.results.length && i < ops.length; i++) {
+      const name =
+        ops[i] && typeof ops[i].operation === "string" ? (ops[i].operation as string) : "";
+      const child = getOp(name);
+      if (!child?.afterJsx) continue;
+      const childArgs = (ops[i].args ?? {}) as Record<string, unknown>;
+      try {
+        await child.afterJsx(r.results[i], childArgs);
+      } catch {
+        /* a follow-up never takes the batch down */
+      }
+    }
+    let failed = 0;
+    for (const c of r.results) {
+      if (c && typeof c === "object" && (c as { ok?: unknown }).ok === false) failed++;
+    }
+    r.failed = failed;
+    r.ok = failed === 0;
+    r.error = failed === 0 ? null : `${failed} of ${r.results.length} operations failed`;
+  },
   toJsx(args) {
     if (!Array.isArray(args.ops)) {
       return `

@@ -46,6 +46,11 @@ export const RENDER_FRAME_FN = `
         var _rfT = t0;
         if (useDst) _rfT = _rfT + c.displayStartTime;
         var _rfFile = AE.ensureParentDir(outAbs);
+        // The PNG lands after this script returns, and callers wait for the
+        // path to exist and settle. A file left by an earlier render would
+        // satisfy that wait at once and be read while AE rewrites it, so it
+        // goes first.
+        try { if (_rfFile.exists) _rfFile.remove(); } catch (eRm) {}
         try {
             c.saveFrameToPng(_rfT, _rfFile);
             return {

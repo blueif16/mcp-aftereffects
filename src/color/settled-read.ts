@@ -11,6 +11,43 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Wait until a file has settled (present, non-empty, size unchanged for
+ * `stableMs`) without reading it. Resolves with the final size; throws when
+ * `timeoutMs` elapses first.
+ */
+export async function waitFileSettled(
+  filePath: string,
+  timeoutMs = 15_000,
+  stableMs = 250,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = -1;
+  let lastChange = Date.now();
+  for (;;) {
+    let size = -1;
+    try {
+      size = (await fs.stat(filePath)).size;
+    } catch {
+      /* not there yet */
+    }
+    if (size >= 0) {
+      if (size !== lastSize) {
+        lastSize = size;
+        lastChange = Date.now();
+      } else if (size > 0 && Date.now() - lastChange >= stableMs) {
+        return size;
+      }
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `file did not settle within ${timeoutMs}ms (saveFrameToPng writes asynchronously): ${filePath}`,
+      );
+    }
+    await sleep(60);
+  }
+}
+
+/**
  * Read a file once it has settled: present, non-empty, and unchanged in size
  * for `stableMs`. Throws when `timeoutMs` elapses first.
  */

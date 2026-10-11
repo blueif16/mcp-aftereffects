@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { measureCaptureTransfer, calibrationKey } from "../color/calibration.js";
 import { decodePng, encodePngSrgb8 } from "../color/png16.js";
-import { readFileSettled } from "../color/settled-read.js";
+import { readFileSettled, waitFileSettled } from "../color/settled-read.js";
 import {
   analyzeFrame,
   composeContactSheet,
@@ -366,6 +366,20 @@ async function nativeFlow(
   const written: string[] = (multi ? frames.map((f) => f.writtenTo) : [payload.writtenTo]).filter(
     (p): p is string => typeof p === "string",
   );
+  // saveFrameToPng writes after the script returns. Every path below reads
+  // the files (and waits for them); with colorManaged:"off" and no analysis
+  // nothing would, and the caller could look before the PNG exists.
+  if (args.colorManaged === "off" && !args.analyze && !args.contactSheet) {
+    for (const file of written) {
+      try {
+        await waitFileSettled(file, 60_000);
+      } catch (err) {
+        payload.ok = false;
+        payload.error = `saveFrameToPng reported ${file}, but no complete file appeared: ${err instanceof Error ? err.message : String(err)}`;
+        return toMcpResult(result);
+      }
+    }
+  }
   // Analysis first: it wants the raw capture, alpha channel included.
   if (args.analyze) await attachAnalysis(payload, frames, written, multi);
   if (args.colorManaged !== "off") {

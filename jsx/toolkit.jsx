@@ -151,7 +151,9 @@ AE.propertyAtPath = function (root, path) {
     var node = root;
     for (var i = 0; i < path.length; i++) {
         var next = null;
-        try { next = node.property(path[i]); } catch (eP) {}
+        // matchName or display name; "Mesh Options" on a parametric mesh
+        // resolves to the current mesh type's group (AE.childProperty).
+        try { next = AE.childProperty(node, path[i]); } catch (eP) {}
         if (!next) return null;
         node = next;
     }

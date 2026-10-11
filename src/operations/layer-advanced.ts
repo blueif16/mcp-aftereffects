@@ -202,7 +202,7 @@ registerOp({
   toJsx(args) {
     return `
             ${jsxCompLayerPreamble(args)}
-            if (!(_layer instanceof AVLayer)) return { ok: false, error: "layer has no source (not an AVLayer)" };
+            if (!AE.isAVLayer(_layer) || !_layer.source) return { ok: false, error: "layer has no source item (text, shape, mesh, camera or light layer)" };
             var _item = AE.findItem(${jsxVal(args.item)});
             if (!_item) return { ok: false, error: "no project item matching " + ${jsxVal(String(args.item))} };
             if (_item instanceof FolderItem) return { ok: false, error: "item is a folder, not footage/comp" };

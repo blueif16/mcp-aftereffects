@@ -2,13 +2,17 @@
 // document describing folders, comps (with full layer/property trees), solid
 // footage, and file footage references. ES3-compatible.
 
-AE.EXPORT_SCHEMA_VERSION = 4;
+AE.EXPORT_SCHEMA_VERSION = 5;
 // v1: basic items + layers + transform/effects/masks/text
 // v2: shape layer contents, layer/comp markers, time remap, material options, audio, extended text document fields
 // v3: layer attrs (blend, matte, adjustment, null, quality, motion blur...), comp attrs, group enabled + mask
 //     attrs, disabled expressions, separated dimensions, spatial/continuity key data, camera/light/style groups
 // v4: footage interpretation, image sequences with frame range, placeholders, proxies (footage + comps),
 //     footage frameRate/pixelAspect, project settings (color management, time display, expressions)
+// v5: Advanced 3D — text/shape/model/mesh layers carry threeDLayer, AV switches and Material Options
+//     (instanceof AVLayer is false for them on AE 26.5); ThreeDModelLayer sourceId; ParametricMeshLayer
+//     type + live mesh/bevel option groups; Material Assignment, Compositing/Displacement Options,
+//     model Animation Options; environment light source (attrs.lightSourceIndex)
 
 AE.exportProject = function () {
     var proj = app.project;

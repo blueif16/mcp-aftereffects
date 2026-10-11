@@ -141,10 +141,16 @@ registerOp({
                 _node = _next;
             }
             var _time = ${jsxVal(args.time ?? null)};
-            if (_time !== null) {
-                _node.setValueAtTime(_time, ${jsxVal(args.value)});
-            } else {
-                _node.setValue(${jsxVal(args.value)});
+            var _val = ${jsxVal(args.value)};
+            try {
+                if (_node.propertyType !== PropertyType.PROPERTY) throw new Error("group");
+                if (_time !== null) {
+                    _node.setValueAtTime(_time, _val);
+                } else {
+                    _node.setValue(_val);
+                }
+            } catch (eSet) {
+                return { ok: false, error: AE.describeSetError(_node, eSet, _val) };
             }
             return { ok: true, name: _node.name, matchName: _node.matchName };
         `;

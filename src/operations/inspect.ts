@@ -5,6 +5,7 @@
 
 import * as path from "node:path";
 
+import { waitFileSettled } from "../color/settled-read.js";
 import { rejectedOutputPath } from "../config.js";
 import { jsxCompLayerPreamble, jsxCompPreamble, jsxVal, registerOp } from "../registry.js";
 import { COMP_INFO_FN, LAYER_FULL_FN, RENDER_FRAME_FN } from "./snippets.js";
@@ -89,6 +90,24 @@ registerOp({
   // Writes a PNG but never touches the project — the same read-only stance as
   // the ae_render_frame tool, so render-verify loops survive AE_MCP_READONLY.
   readOnly: true,
+  // saveFrameToPng returns before the PNG exists (AE writes it after the
+  // script ends). Report success only once the file is on disk and settled,
+  // so a caller reading writtenTo right away — inside batch.run too — finds it.
+  async afterJsx(result) {
+    const r = result as {
+      ok?: boolean;
+      writtenTo?: unknown;
+      error?: string;
+      bytes?: number;
+    } | null;
+    if (!r || r.ok !== true || typeof r.writtenTo !== "string") return;
+    try {
+      r.bytes = await waitFileSettled(r.writtenTo, 60_000);
+    } catch (err) {
+      r.ok = false;
+      r.error = `saveFrameToPng reported ${r.writtenTo}, but no complete file appeared: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  },
   toJsx(args) {
     const raw = String(args.outPath);
     if (!path.isAbsolute(raw)) {

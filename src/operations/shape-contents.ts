@@ -330,7 +330,7 @@ registerOp({
             if (!_cmd) _cmd = 3973;
             var _sources = [];
             for (var _si = 0; _si < _layers.length; _si++) {
-                if (!(_layers[_si] instanceof AVLayer) || !_layers[_si].source) return { ok: false, error: "layer '" + _layers[_si].name + "' is not a footage layer" };
+                if (!AE.isAVLayer(_layers[_si]) || !_layers[_si].source) return { ok: false, error: "layer '" + _layers[_si].name + "' is not a footage layer" };
                 _sources.push(_layers[_si]);
             }
             var _out = [];

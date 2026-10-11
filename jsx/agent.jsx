@@ -252,9 +252,17 @@
                 state.taskId = null;
             }
         };
-        // Run once now so the instance is registered before the first
-        // scheduled tick, then keep going for the life of the process.
-        tick();
+        // Register from the first SCHEDULED tick, not right here. aerender
+        // runs this Startup script too, but its scheduled tasks never fire
+        // while it renders: an immediate tick registered it as a second
+        // live instance for HEARTBEAT_STALE_MS, during which every call
+        // without an instance name failed with "2 instances are live"
+        // (seen 2026-10-10 on each aerender / render chunk start). A GUI
+        // instance registers 250 ms later instead. Render-engine processes
+        // are skipped outright.
+        var renderEngine = false;
+        try { renderEngine = app.isRenderEngine === true; } catch (eRe) { /* attribute absent */ }
+        if (renderEngine) return;
         state.taskId = app.scheduleTask("$.global.AE_MCP_AGENT.tick()", TICK_MS, true);
     }
 

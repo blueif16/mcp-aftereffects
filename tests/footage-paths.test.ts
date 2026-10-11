@@ -39,10 +39,22 @@ describe("isAbsolutePath", () => {
 
 describe("relativizeFootagePaths", () => {
   it("makes paths under the base relative, case-insensitively on drives, and leaves others", () => {
-    const d = doc("D:/media/assets/a.mov", "d:\\Media\\renders\\t_0001.png", "E:/other/c.wav", null);
+    const d = doc(
+      "D:/media/assets/a.mov",
+      "d:\\Media\\renders\\t_0001.png",
+      "E:/other/c.wav",
+      null,
+    );
     const n = relativizeFootagePaths(d, "D:/media/");
     expect(n).toBe(3);
-    expect(files(d)).toEqual(["assets/a.mov", "renders/t_0001.png", "E:/other/c.wav", null, "proxy/p_0001.png", undefined]);
+    expect(files(d)).toEqual([
+      "assets/a.mov",
+      "renders/t_0001.png",
+      "E:/other/c.wav",
+      null,
+      "proxy/p_0001.png",
+      undefined,
+    ]);
   });
 
   it("does not match a sibling directory that shares the prefix", () => {
@@ -57,7 +69,11 @@ describe("resolveFootagePaths", () => {
     const d = doc("assets/a.mov", "./renders/../renders/t_0001.png", "E:/abs.wav");
     const r = resolveFootagePaths(d, { baseDir: "D:/mirror/vid\\" });
     expect(r).toEqual({ rewritten: 2, unresolved: [] });
-    expect(files(d).slice(0, 3)).toEqual(["D:/mirror/vid/assets/a.mov", "D:/mirror/vid/renders/t_0001.png", "E:/abs.wav"]);
+    expect(files(d).slice(0, 3)).toEqual([
+      "D:/mirror/vid/assets/a.mov",
+      "D:/mirror/vid/renders/t_0001.png",
+      "E:/abs.wav",
+    ]);
   });
 
   it("applies pathMap before baseDir, first match wins", () => {
