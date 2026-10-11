@@ -6,7 +6,7 @@ import { errorResult } from "../errors.js";
 import { footagePathHolders, resolveFootagePaths } from "../footage-paths.js";
 import { validateAeProjectDoc } from "../validate.js";
 import { defineTool, jsonResult, toMcpResult } from "./define-tool.js";
-import { focusAfterEffects } from "../transport/dialogs.js";
+import { withAfterEffectsForeground } from "../transport/dialogs.js";
 
 export const projectImportTool = defineTool({
   name: "ae_project_import_json",
@@ -143,24 +143,30 @@ export const projectImportTool = defineTool({
     // literal meant handing the ES3 parser a multi-megabyte expression and
     // making every character in every layer name an escaping hazard. As a
     // payload it is parsed once, by JSON.parse, before our code ever runs.
-    // Layer styles are added through Layer-menu commands, which AE only
-    // enables while its window has the foreground.
-    if (documentUsesLayerStyles(doc)) await focusAfterEffects();
     const code = `
         return AE.importProject(payload.doc, payload.opts);
     `;
-    const result = await transport.execute({
-      code,
-      payload: {
-        doc,
-        opts: {
-          clearFirst: !!args.clearFirst,
-          ...(args.projectSettings !== undefined ? { projectSettings: args.projectSettings } : {}),
+    const run = () =>
+      transport.execute({
+        code,
+        payload: {
+          doc,
+          opts: {
+            clearFirst: !!args.clearFirst,
+            ...(args.projectSettings !== undefined
+              ? { projectSettings: args.projectSettings }
+              : {}),
+          },
         },
-      },
-      label: "project_import_json",
-      timeoutMs: 600_000,
-    });
+        label: "project_import_json",
+        timeoutMs: 600_000,
+      });
+    // Layer styles are added through Layer-menu commands, which AE only runs
+    // while its window has the foreground. Borrow it for this one call and
+    // hand it back; every other import leaves the user's desktop alone.
+    const result = documentUsesLayerStyles(doc)
+      ? await withAfterEffectsForeground(run)
+      : await run();
     return toMcpResult(result);
   },
 });

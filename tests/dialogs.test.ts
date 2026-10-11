@@ -57,6 +57,14 @@ describe("parseDialogScan", () => {
     expect(out[1].window).toBeNull();
   });
 
+  it("reports an AE-drawn alert by its title when the message is not readable", () => {
+    const [d] = parseDialogScan(
+      JSON.stringify({ ...SCANNED, id: "4137766", text: "", title: "Warning" }),
+    );
+    expect(d.id).toBe("4137766");
+    expect(d.text).toBe("[Warning] (message drawn by After Effects, not readable)");
+  });
+
   it("treats empty or non-JSON output as no dialogs", () => {
     expect(parseDialogScan("")).toEqual([]);
     expect(parseDialogScan("Add-Type : something went wrong")).toEqual([]);

@@ -21,6 +21,16 @@
 //     scheduled task resumes as soon as the dialog is gone.
 //   - Splash / Home-screen windows are `#32770` too but carry no text, so
 //     "has readable text" is what separates an alert from chrome.
+//   - Some alerts are drawn by AE itself (verified 2026-10-10: the launch-time
+//     "Your disk cache folder is on a drive that does not have enough
+//     available space" warning): a `#32770` whose only child is a
+//     "DroverLord - Window Class" view. It has no readable message but a
+//     window TITLE ("Warning"), which chrome never has — so a titled `#32770`
+//     counts as a dialog too, reported with its title. Escape posted to it
+//     does nothing; a mouse click posted to its view at the bottom-right
+//     button (where AE puts Cancel, or OK when it is the only button) closes
+//     it. Both are posted messages: neither activates After Effects or takes
+//     the foreground from what the user is working in.
 //
 // The scan shells out to PowerShell with a small inline C# helper (~0.6 s),
 // so it runs only where a failure has to be explained or a caller asked —
@@ -117,11 +127,14 @@ public static class AeMcpWin {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, StringBuilder l, uint f, uint t, out IntPtr r);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   public static string Cls(IntPtr h) { var s = new StringBuilder(256); GetClassName(h, s, 256); return s.ToString(); }
+  public static string Title(IntPtr h) { var s = new StringBuilder(512); GetWindowText(h, s, 512); return s.ToString(); }
+  public static IntPtr FirstChild(IntPtr w) { IntPtr f = IntPtr.Zero; EnumChildWindows(w, (h, p) => { f = h; return false; }, IntPtr.Zero); return f; }
   static string Txt(IntPtr h) { var s = new StringBuilder(8192); IntPtr r; SendMessageTimeout(h, 0x000D, (IntPtr)8192, s, 2, 500, out r); return s.ToString(); }
   public static List<IntPtr> Tops() { var l = new List<IntPtr>(); EnumWindows((h, p) => { l.Add(h); return true; }, IntPtr.Zero); return l; }
   public static string Message(IntPtr w) {
@@ -146,9 +159,11 @@ function Get-AeDialogs {
     if (-not [AeMcpWin]::IsWindowVisible($h)) { continue }
     if ([AeMcpWin]::Cls($h) -ne "#32770") { continue }
     $text = [AeMcpWin]::Message($h)
-    if ($text.Length -eq 0) { continue }
+    $title = [AeMcpWin]::Title($h)
+    # No readable message and no title: splash / Home screen, not a dialog.
+    if ($text.Length -eq 0 -and $title.Length -eq 0) { continue }
     $r = New-Object AeMcpWin+RECT; [void][AeMcpWin]::GetWindowRect($h, [ref]$r)
-    $found += [pscustomobject]@{ pid = [int]$p; id = [string][int64]$h; text = $text; width = $r.R - $r.L; height = $r.B - $r.T; window = $ae[[int]$p] }
+    $found += [pscustomobject]@{ pid = [int]$p; id = [string][int64]$h; text = $text; title = $title; width = $r.R - $r.L; height = $r.B - $r.T; window = $ae[[int]$p] }
   }
   return ,$found
 }
@@ -166,14 +181,33 @@ $vk = 0x1B
 $match = @(Get-AeDialogs | Where-Object { $_.id -eq $target })
 if ($match.Count -eq 0) { ConvertTo-Json -Compress -InputObject @{ posted = $false; closed = $false; text = $null }; exit }
 $h = [IntPtr][int64]$target
+function Wait-Closed { for ($i = 0; $i -lt 20; $i++) { Start-Sleep -Milliseconds 100; if (-not [AeMcpWin]::IsWindow($h) -or -not [AeMcpWin]::IsWindowVisible($h)) { return $true } }; return $false }
 [void][AeMcpWin]::PostMessage($h, 0x0100, [IntPtr]$vk, [IntPtr]0)
 [void][AeMcpWin]::PostMessage($h, 0x0101, [IntPtr]$vk, [IntPtr]0)
-$closed = $false
-for ($i = 0; $i -lt 20; $i++) {
-  Start-Sleep -Milliseconds 100
-  if (-not [AeMcpWin]::IsWindow($h) -or -not [AeMcpWin]::IsWindowVisible($h)) { $closed = $true; break }
+$closed = Wait-Closed
+$method = 'escape'
+$shown = $match[0].text
+if ($shown.Length -eq 0) { $shown = '[' + $match[0].title + '] (message drawn by After Effects, not readable)' }
+# An AE-drawn dialog ignores keys it was not given focus for. Click its
+# bottom-right button (Cancel, or OK when alone) with posted mouse messages:
+# no activation, no foreground change.
+if (-not $closed -and $match[0].text.Length -eq 0) {
+  $view = [AeMcpWin]::FirstChild($h)
+  if ($view -ne [IntPtr]::Zero) {
+    $dr = New-Object AeMcpWin+RECT; [void][AeMcpWin]::GetWindowRect($h, [ref]$dr)
+    $vr = New-Object AeMcpWin+RECT; [void][AeMcpWin]::GetWindowRect($view, [ref]$vr)
+    $x = [int]($dr.L + 0.89 * ($dr.R - $dr.L)) - $vr.L
+    $y = [int]($dr.T + 0.875 * ($dr.B - $dr.T)) - $vr.T
+    $lp = [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF))
+    [void][AeMcpWin]::PostMessage($view, 0x0200, [IntPtr]0, $lp)
+    [void][AeMcpWin]::PostMessage($view, 0x0201, [IntPtr]1, $lp)
+    Start-Sleep -Milliseconds 80
+    [void][AeMcpWin]::PostMessage($view, 0x0202, [IntPtr]0, $lp)
+    $closed = Wait-Closed
+    $method = 'click_bottom_right'
+  }
 }
-ConvertTo-Json -Compress -InputObject @{ posted = $true; closed = $closed; text = $match[0].text }
+ConvertTo-Json -Compress -InputObject @{ posted = $true; closed = $closed; text = $shown; method = $method }
 `;
 
 // macOS: one JXA script, two modes. Everything it acts on arrives through the
@@ -406,10 +440,14 @@ export function parseDialogScan(raw: string): AeDialog[] {
     const e = entry as Record<string, unknown>;
     if (typeof e.id !== "string" || typeof e.text !== "string" || typeof e.pid !== "number")
       continue;
+    const title = typeof e.title === "string" ? e.title.trim() : "";
+    let text = e.text.replace(/\r\n/g, "\n").trim();
+    // AE-drawn alerts have no readable message, only a title ("Warning").
+    if (!text && title) text = `[${title}] (message drawn by After Effects, not readable)`;
     out.push({
       pid: e.pid,
       id: e.id,
-      text: e.text.replace(/\r\n/g, "\n").trim(),
+      text,
       width: typeof e.width === "number" ? e.width : 0,
       height: typeof e.height === "number" ? e.height : 0,
       window: typeof e.window === "string" && e.window.length > 0 ? e.window : null,
@@ -518,15 +556,97 @@ var procs = se.processes.whose({ name: { _beginsWith: 'After Effects' } })();
 if (procs.length) { procs[0].frontmost = true; 'true'; } else 'false';
 `;
 
+// The window that had the foreground, and whether AE was minimized, so a
+// borrowed foreground can be handed back (see withAfterEffectsForeground).
+const FOREGROUND_STATE_SCRIPT = String.raw`
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public class AeMcpFg {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+}
+'@
+$p = Get-Process AfterFX -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+$ae = 0; $min = $false
+if ($p) { $ae = [int64]$p.MainWindowHandle; $min = [AeMcpFg]::IsIconic($p.MainWindowHandle) }
+ConvertTo-Json -Compress -InputObject @{ fg = [string][int64][AeMcpFg]::GetForegroundWindow(); ae = [string]$ae; aeMinimized = $min }
+`;
+
+// Give the foreground back: re-minimize AE if it was minimized, then return
+// the foreground to the window that had it (ALT tap for the same reason as
+// FOCUS_SCRIPT). Handles arrive through the environment.
+const FOREGROUND_RESTORE_SCRIPT = String.raw`
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public class AeMcpFgR {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
+}
+'@
+$fg = [IntPtr][int64]$env:AE_MCP_FG
+$ae = [IntPtr][int64]$env:AE_MCP_AE
+if ($env:AE_MCP_AE_MIN -eq '1' -and [AeMcpFgR]::IsWindow($ae)) { [void][AeMcpFgR]::ShowWindow($ae, 7) }
+if ($fg -ne [IntPtr]::Zero -and $fg -ne $ae -and [AeMcpFgR]::IsWindow($fg)) {
+  [AeMcpFgR]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+  [AeMcpFgR]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+  if ([AeMcpFgR]::SetForegroundWindow($fg)) { 'true' } else { 'false' }
+} else { 'true' }
+`;
+
+/**
+ * Run `fn` with After Effects in the foreground — the only way its Layer-menu
+ * commands run — then hand the foreground back to whatever had it and
+ * re-minimize AE if it was minimized, so the user's desktop is borrowed for
+ * the duration of the call rather than taken. Windows only; elsewhere (and if
+ * the state cannot be read) it falls back to focusAfterEffects alone.
+ */
+export async function withAfterEffectsForeground<T>(
+  fn: () => Promise<T>,
+  platform: NodeJS.Platform = process.platform,
+): Promise<T> {
+  if (platform !== "win32") {
+    await focusAfterEffects(platform);
+    return fn();
+  }
+  let state: { fg?: string; ae?: string; aeMinimized?: boolean } | null = null;
+  try {
+    state = JSON.parse((await runner(FOREGROUND_STATE_SCRIPT, {})).replace(/^\uFEFF/, "").trim());
+  } catch {
+    state = null;
+  }
+  await focusAfterEffects(platform);
+  try {
+    return await fn();
+  } finally {
+    if (state && state.ae && state.ae !== "0") {
+      try {
+        await runner(FOREGROUND_RESTORE_SCRIPT, {
+          AE_MCP_FG: /^\d{1,20}$/.test(state.fg ?? "") ? (state.fg as string) : "0",
+          AE_MCP_AE: /^\d{1,20}$/.test(state.ae) ? state.ae : "0",
+          AE_MCP_AE_MIN: state.aeMinimized ? "1" : "0",
+        });
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+}
+
 /**
  * Bring After Effects to the foreground so menu commands run by
  * app.executeCommand are enabled. Best-effort: resolves false when it could
- * not (no window, unsupported platform, script failure).
+ * not (no window, unsupported platform, script failure). Prefer
+ * withAfterEffectsForeground, which gives the foreground back afterwards.
  */
-export async function focusAfterEffects(platform: NodeJS.Platform = process.platform): Promise<boolean> {
+export async function focusAfterEffects(
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
   try {
     if (platform === "win32") return (await runner(FOCUS_SCRIPT, {})).trim().endsWith("true");
-    if (platform === "darwin") return (await osascriptRunner(DARWIN_FOCUS_SCRIPT, {})).trim() === "true";
+    if (platform === "darwin")
+      return (await osascriptRunner(DARWIN_FOCUS_SCRIPT, {})).trim() === "true";
   } catch {
     /* fall through */
   }
