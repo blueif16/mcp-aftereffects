@@ -1,6 +1,7 @@
 // Layer operations — create, delete, duplicate, set properties.
 
 import { registerOp, jsxVal, jsxFail, jsxCompPreamble, jsxCompLayerPreamble } from "../registry.js";
+import { TRANSFORM_VALUE_KEYS, transformWriteLines } from "./transform.js";
 
 registerOp({
   name: "layer.create_solid",
@@ -652,11 +653,72 @@ registerOp({
   },
 });
 
+/**
+ * Writable Layer / AVLayer / LightLayer attributes layer.set_props assigns
+ * directly. ExtendScript accepts ANY name on a host object (`_l.opacity = 50`
+ * just adds an expando and AE never sees it), so a key outside this list must
+ * fail instead of passing through as a silent no-op.
+ */
+const LAYER_SET_ATTRS = [
+  // Layer
+  "name",
+  "comment",
+  "enabled",
+  "label",
+  "locked",
+  "shy",
+  "solo",
+  "selected",
+  "startTime",
+  "inPoint",
+  "outPoint",
+  "stretch",
+  "autoOrient",
+  // AVLayer (footage, solids, text, shapes, 3D models)
+  "adjustmentLayer",
+  "audioEnabled",
+  "blendingMode",
+  "collapseTransformation",
+  "effectsActive",
+  "environmentLayer",
+  "frameBlendingType",
+  "guideLayer",
+  "motionBlur",
+  "preserveTransparency",
+  "quality",
+  "samplingQuality",
+  "threeDLayer",
+  "threeDPerChar",
+  "timeRemapEnabled",
+  "trackMatteType",
+  // LightLayer
+  "lightType",
+  "lightSource",
+];
+
+const hasOwn = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+
+/** Per-axis rotation keys, as layer.calculate_transform returns them. */
+const AXIS_ROTATION_STREAMS: Record<string, string> = {
+  xRotation: "ADBE Rotate X",
+  yRotation: "ADBE Rotate Y",
+  zRotation: "ADBE Rotate Z",
+};
+
+/** Keys that look like layer attributes but need their own operation. */
+const LAYER_SET_REDIRECTS: Record<string, string> = {
+  parent: "layer.set_parent",
+  trackMatteLayer: "layer.set_track_matte",
+  transform: "transform.set",
+};
+
 registerOp({
   name: "layer.set_props",
   category: "layer",
   description:
-    "Set basic layer properties. layer can be index, name, 'selected', or 'all'. Enum-valued attributes accept string names: quality (best|draft|wireframe), samplingQuality (bilinear|bicubic), frameBlendingType (off|frameMix|pixelMotion), autoOrient (off|alongPath|cameraOrPointOfInterest|charactersTowardCamera), blendingMode, lightType (spot|parallel|point|ambient|environment).",
+    "Set basic layer properties. layer can be index, name, 'selected', or 'all'. Enum-valued attributes accept string names: quality (best|draft|wireframe), samplingQuality (bilinear|bicubic), frameBlendingType (off|frameMix|pixelMotion), autoOrient (off|alongPath|cameraOrPointOfInterest|charactersTowardCamera), blendingMode, lightType (spot|parallel|point|ambient|environment). " +
+    "Transform values (position, scale, rotation, orientation, opacity, anchorPoint) are accepted too and written exactly like transform.set, plus xRotation/yRotation/zRotation (degrees) as layer.calculate_transform returns them. " +
+    "An unknown key, or one the target layer does not have (e.g. blendingMode on a camera), fails the call.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -669,14 +731,63 @@ registerOp({
       name: "props",
       type: "object",
       description:
-        "Object with keys to set, e.g. { name: 'foo', enabled: false, label: 5, threeDLayer: true }. lightSource takes a layer index/name/{id} or { item } (see light.set_source).",
+        "Object with keys to set, e.g. { name: 'foo', enabled: false, label: 5, threeDLayer: true, opacity: 40 }. lightSource takes a layer index/name/{id} or { item } (see light.set_source). Accepted keys: " +
+        [...LAYER_SET_ATTRS, ...TRANSFORM_VALUE_KEYS, ...Object.keys(AXIS_ROTATION_STREAMS)].join(
+          ", ",
+        ) +
+        ".",
       required: true,
     },
   ],
   toJsx(args) {
     const props = (args.props ?? {}) as Record<string, unknown>;
+    const transformKeys = TRANSFORM_VALUE_KEYS as readonly string[];
+    const acceptedKeys = [
+      ...LAYER_SET_ATTRS,
+      ...transformKeys,
+      ...Object.keys(AXIS_ROTATION_STREAMS),
+    ].join(", ");
+    const bad: string[] = [];
+    for (const k of Object.keys(props)) {
+      if (
+        LAYER_SET_ATTRS.includes(k) ||
+        transformKeys.includes(k) ||
+        hasOwn(AXIS_ROTATION_STREAMS, k)
+      )
+        continue;
+      const via = hasOwn(LAYER_SET_REDIRECTS, k) ? LAYER_SET_REDIRECTS[k] : undefined;
+      bad.push(via ? `'${k}' (use ${via})` : `'${k}'`);
+    }
+    if (bad.length > 0) {
+      return jsxFail(
+        `unknown or unsupported key${bad.length > 1 ? "s" : ""} ${bad.join(", ")}. ` +
+          `Accepted: ${acceptedKeys}.`,
+      );
+    }
+    if (Object.keys(props).length === 0) return jsxFail("props is empty");
+
+    // Attributes first: threeDLayer must be on before orientation / XY rotation.
     const lines: string[] = [];
+    const xfArgs: Record<string, unknown> = {};
+    const axisLines: string[] = [];
     for (const [k, v] of Object.entries(props)) {
+      if (transformKeys.includes(k)) {
+        xfArgs[k] = v;
+        continue;
+      }
+      const stream = hasOwn(AXIS_ROTATION_STREAMS, k) ? AXIS_ROTATION_STREAMS[k] : undefined;
+      if (stream) {
+        if (typeof v !== "number") return jsxFail(`${k} must be a number (degrees)`);
+        // X/Y Rotation exist on every layer but only act on 3D ones.
+        axisLines.push(`
+                if (${jsxVal(stream !== "ADBE Rotate Z")} && !((_l instanceof CameraLayer) || (_l instanceof LightLayer) || AE.safeGet(function () { return _l.threeDLayer === true; }, false))) {
+                    _w.push(${jsxVal(k)} + ": needs a 3D layer (pass threeDLayer: true)");
+                } else {
+                    var _ap = _xf.property(${jsxVal(stream)});
+                    try { _ap.setValue(${jsxVal(v)}); } catch (e) { _w.push(${jsxVal(k)} + ": " + AE.describeSetError(_ap, e, ${jsxVal(v)})); }
+                }`);
+        continue;
+      }
       // LightLayer.lightSource takes a Layer object, which JSON cannot carry:
       // resolve it through the same path as light.set_source.
       if (k === "lightSource") {
@@ -685,22 +796,34 @@ registerOp({
         );
         continue;
       }
+      // A name this layer class does not define reads back undefined; assigning
+      // it would only add an expando, so report it instead.
       lines.push(
-        `try { _l[${jsxVal(k)}] = AE.coerceLayerPropValue(${jsxVal(k)}, ${jsxVal(v)}); } catch (e) { _w.push(${jsxVal(k)} + ": " + AE.errText(e)); }`,
+        `try { if (AE.safeGet(function () { return _l[${jsxVal(k)}] === undefined; }, true)) { _w.push(${jsxVal(k)} + ": not an attribute of " + AE.serializeLayerSummary(_l).type); } else { _l[${jsxVal(k)}] = AE.coerceLayerPropValue(${jsxVal(k)}, ${jsxVal(v)}); } } catch (e) { _w.push(${jsxVal(k)} + ": " + AE.errText(e)); }`,
       );
+    }
+    if (Object.keys(xfArgs).length > 0 || axisLines.length > 0) {
+      const xf = transformWriteLines(xfArgs);
+      if ("error" in xf) return jsxFail(xf.error);
+      lines.push("var _xf = _l.transform;", ...xf.lines, ...axisLines);
     }
     return `
             ${jsxCompPreamble(args)}
             var _layers = AE.resolveLayers(_comp, ${jsxVal(args.layer)});
             if (_layers.length === 0) return { ok: false, error: "no layers matched" };
-            var _results = [];
+            var _results = [], _allW = [];
             for (var _li = 0; _li < _layers.length; _li++) {
                 var _l = _layers[_li];
                 var _w = [];
                 ${lines.join("\n")}
                 _results.push({ name: _l.name, warnings: _w });
+                for (var _wi = 0; _wi < _w.length; _wi++) _allW.push(_l.name + ": " + _w[_wi]);
             }
-            return { ok: true, count: _results.length, layers: _results };
+            // A key that did not take on some layer is a failed call, never a
+            // success with notes: the per-layer results still say what did apply.
+            var _res = { ok: true, count: _results.length, layers: _results };
+            if (_allW.length) { _res.ok = false; _res.error = _allW.join("; "); }
+            return _res;
         `;
   },
 });

@@ -905,4 +905,74 @@ describe("layer.set_props enum coercion", () => {
     expect(jsx).toContain('AE.coerceLayerPropValue("samplingQuality", "bicubic")');
     expect(jsx).toContain('AE.coerceLayerPropValue("enabled", false)');
   });
+
+  it("writes opacity through the Transform group, like transform.set", () => {
+    const op = getOp("layer.set_props")!;
+    const jsx = op.toJsx({ comp: "Main", layer: 1, props: { opacity: 37, name: "glow" } });
+    // Bug 2026-10-13: `_l["opacity"] = 37` only added an expando and AE kept 100 %.
+    expect(jsx).not.toContain('_l["opacity"]');
+    expect(jsx).toContain("_xf.opacity.setValue(37)");
+    expect(jsx).toContain(
+      getOp("transform.set")!
+        .toJsx({ comp: "Main", layer: 1, opacity: 37 })
+        .match(/try \{ _xf\.opacity[^\n]*/)![0],
+    );
+    // Attributes go first (threeDLayer before orientation), then transform values.
+    const order = op.toJsx({
+      comp: "Main",
+      layer: 1,
+      props: { orientation: [0, 45, 0], threeDLayer: true },
+    });
+    expect(order.indexOf('_l["threeDLayer"]')).toBeLessThan(order.indexOf('"ADBE Orientation"'));
+  });
+
+  it("routes position/scale/rotation/anchorPoint and per-axis rotation to the transform streams", () => {
+    const jsx = getOp("layer.set_props")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      props: {
+        position: [10, 20],
+        scale: [50, 50],
+        rotation: 15,
+        anchorPoint: [0, 0],
+        xRotation: 30,
+      },
+    });
+    expect(jsx).toContain("AE.writeValue(_xf.position, [10,20])");
+    expect(jsx).toContain("AE.writeValue(_xf.scale, [50,50])");
+    expect(jsx).toContain('_xf.property("ADBE Rotate Z").setValue(15)');
+    expect(jsx).toContain("AE.writeValue(_xf.anchorPoint, [0,0])");
+    expect(jsx).toContain('_xf.property("ADBE Rotate X")');
+    expect(jsx).not.toMatch(/_l\["(position|scale|rotation|anchorPoint|xRotation)"\]/);
+  });
+
+  it("rejects unknown keys instead of silently succeeding", () => {
+    const op = getOp("layer.set_props")!;
+    const typo = op.toJsx({ comp: "Main", layer: 1, props: { nmae: "x", enabled: false } });
+    expect(typo).toContain("return { ok: false");
+    expect(typo).toContain("'nmae'");
+    expect(typo).not.toContain("coerceLayerPropValue");
+    expect(op.toJsx({ comp: "Main", layer: 1, props: { parent: 2 } })).toContain(
+      "'parent' (use layer.set_parent)",
+    );
+    // Prototype names are not accepted keys either.
+    expect(op.toJsx({ comp: "Main", layer: 1, props: { constructor: 1 } })).toContain(
+      "'constructor'",
+    );
+    expect(op.toJsx({ comp: "Main", layer: 1, props: { xRotation: "30" } })).toContain(
+      "xRotation must be a number",
+    );
+    expect(op.toJsx({ comp: "Main", layer: 1, props: {} })).toContain("props is empty");
+  });
+
+  it("fails the call when a key does not take, and guards attributes the layer lacks", () => {
+    const jsx = getOp("layer.set_props")!.toJsx({
+      comp: "Main",
+      layer: "all",
+      props: { blendingMode: "screen" },
+    });
+    expect(jsx).toContain('_l["blendingMode"] === undefined');
+    expect(jsx).toContain("not an attribute of");
+    expect(jsx).toContain("_res.ok = false");
+  });
 });

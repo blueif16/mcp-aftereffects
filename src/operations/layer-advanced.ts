@@ -407,7 +407,7 @@ registerOp({
   category: "layer",
   readOnly: true,
   description:
-    "Calculate the transform that maps a 3D layer onto three corner points (AVLayer.calculateTransformFromPoints) - corner-pin style placement in 3D space. Calculation-only: returns anchorPoint/position/x-y-zRotation/scale without touching the layer — apply them with property.set / layer.set_props.",
+    "Calculate the transform that maps a 3D layer onto three corner points (AVLayer.calculateTransformFromPoints) - corner-pin style placement in 3D space. Calculation-only: returns anchorPoint/position/x-y-zRotation/scale without touching the layer — apply them with layer.set_props (it takes these keys as they come back) or property.set.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
