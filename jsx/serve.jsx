@@ -1,9 +1,9 @@
-// mcp-aftereffects request server — turns one request-<id>.json into one
+// mcp-aftereffects request server - turns one request-<id>.json into one
 // response-<id>.json. Shared by the two ways a request reaches After Effects:
 //
-//   dispatcher.jsx  push — launched per call by `AfterFX.exe -r` / DoScript,
+//   dispatcher.jsx  push - launched per call by `AfterFX.exe -r` / DoScript,
 //                   finds the oldest request in the shared mailbox
-//   agent.jsx       pull — resident in one AE instance, polls that instance's
+//   agent.jsx       pull - resident in one AE instance, polls that instance's
 //                   own mailbox (<runtime>/instances/<id>/) from a scheduled task
 //
 // Both hand `AE_MCP.serveRequest` a request File and the directory it lives
@@ -30,7 +30,7 @@ var AE_MCP = AE_MCP || {};
 // `"failed: " + e` is not a safe way to report an error in ExtendScript. The
 // engine cannot coerce an Error to a primitive, so the concatenation ITSELF
 // throws ("Object of type Error found where a Number, Array, or Property is
-// needed") — from inside the handler whose whole job was to report the
+// needed") - from inside the handler whose whole job was to report the
 // original failure. The real error is lost, the replacement escapes, and AE
 // raises a modal that blocks all scripting until a human clicks OK; every
 // later call then fails as a timeout.
@@ -133,7 +133,7 @@ AE_MCP.serveRequest = function (requestFile, mailboxDir, logPath) {
         // 1-based line in the COMPILED function body where execution threw
         // (ExtendScript Error.line). The body = the wrapped request code,
         // and new Function's synthesized header occupies line 1, so this is
-        // NOT a line in what the caller wrote — the Node side owns the
+        // NOT a line in what the caller wrote - the Node side owns the
         // arithmetic that maps it back (it knows the wrapper layout).
         line: null,
         stack: null,
@@ -151,7 +151,7 @@ AE_MCP.serveRequest = function (requestFile, mailboxDir, logPath) {
             try { dest.remove(); } catch (eRm) { /* ignore */ }
         }
         // File#rename takes a new name (not a path). tmp and dest share a
-        // parent dir, so this is effectively atomic on NTFS — the poller
+        // parent dir, so this is effectively atomic on NTFS - the poller
         // never sees a half-written response.
         tmp.rename("response-" + requestId + ".json");
     }
@@ -175,7 +175,7 @@ AE_MCP.serveRequest = function (requestFile, mailboxDir, logPath) {
     /**
      * Last resort when serializing the real response fails. Hand-builds a
      * minimal, provably well-formed error response so the caller learns
-     * what happened immediately instead of waiting out its timeout —
+     * what happened immediately instead of waiting out its timeout -
      * which is the only thing it could do if we wrote nothing at all.
      */
     function writeFallbackResponse(why) {
@@ -244,7 +244,7 @@ AE_MCP.serveRequest = function (requestFile, mailboxDir, logPath) {
         return;
     }
     if (request.id && String(request.id) !== requestId) {
-        // Body and filename disagree — refuse rather than answer under an id
+        // Body and filename disagree - refuse rather than answer under an id
         // the caller is not polling for.
         response.error = "request id mismatch: filename says " + requestId + ", body says " + String(request.id);
         writeResponse();
@@ -255,7 +255,7 @@ AE_MCP.serveRequest = function (requestFile, mailboxDir, logPath) {
     // `undoGroup: false` marks a request that DRIVES the undo stack (Undo,
     // Redo). AE resolves those against the group that is still open, so
     // wrapping them reverts nothing the caller asked for and leaves the
-    // stack describing a step that never happened — such a request runs
+    // stack describing a step that never happened - such a request runs
     // bare. A missing field means the old contract: group it.
     var undoLabel = "mcp-aftereffects: " + (request.label || "action");
     var wantUndoGroup = (request.undoGroup !== false);
@@ -263,7 +263,7 @@ AE_MCP.serveRequest = function (requestFile, mailboxDir, logPath) {
     // condition: project boundary requests (project.open / project.new)
     // run ungrouped yet are exactly the calls most likely to pop a modal
     // (missing footage/fonts on open). Only requests that DRIVE the undo
-    // stack — Undo/Redo — must stay unsuppressed: beginSuppressDialogs
+    // stack - Undo/Redo - must stay unsuppressed: beginSuppressDialogs
     // opens an undo-transaction-like scope of its own, so wrapping them
     // makes AE resolve Undo against THAT scope (nothing reverts, the
     // stack pops unbalanced, "UndoGroup Mismatch" warnings, broken redo).
@@ -279,12 +279,12 @@ AE_MCP.serveRequest = function (requestFile, mailboxDir, logPath) {
             // project.open on an AEP with missing footage/fonts, or an
             // effect raising its own warning, pops a modal that blocks
             // every later `-r` launch until a human clicks OK. MUST be
-            // undone in the finally below — left on, it would silently
+            // undone in the finally below - left on, it would silently
             // eat dialogs for the user's whole session.
             try {
                 app.beginSuppressDialogs();
                 dialogsSuppressed = true;
-            } catch (eSup) { /* unavailable — run with dialogs enabled */ }
+            } catch (eSup) { /* unavailable - run with dialogs enabled */ }
         }
 
         if (wantUndoGroup) {
@@ -320,7 +320,7 @@ AE_MCP.serveRequest = function (requestFile, mailboxDir, logPath) {
             try { app.endUndoGroup(); } catch (eEnd) { /* ignore */ }
         }
         if (dialogsSuppressed) {
-            // false: do NOT replay the suppressed alerts — that replay is
+            // false: do NOT replay the suppressed alerts - that replay is
             // itself a modal, the exact thing being prevented. Whatever was
             // suppressed is already reported through response.error/logs.
             try { app.endSuppressDialogs(false); } catch (eEndSup) { /* ignore */ }

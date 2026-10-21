@@ -1,4 +1,4 @@
-// mcp-aftereffects shared JSX helpers — included by dispatcher.jsx so every tool call
+// mcp-aftereffects shared JSX helpers - included by dispatcher.jsx so every tool call
 // has these in scope. Keep this file ES3-compatible: var only, no arrow
 // functions, no Array.prototype.map/filter, no template strings.
 
@@ -8,7 +8,7 @@ var AE = AE || {};
 
 /**
  * Render a caught exception as text. Use this instead of `"failed: " + e`,
- * always — the concatenation is not the harmless shorthand it looks like.
+ * always - the concatenation is not the harmless shorthand it looks like.
  * ExtendScript cannot coerce an Error to a primitive, so `+ e` throws on its
  * own ("Object of type Error found where a Number, Array, or Property is
  * needed") from inside the handler that was supposed to report the original
@@ -82,7 +82,7 @@ AE.findCompByNameOrId = function (nameOrId) {
 
 // Find comps by name, id, or glob pattern ('*' = all, 'review_id_*' = prefix
 // match). An ARRAY of those resolves each entry and unions the results (in
-// entry order, duplicates dropped) — every op that takes a comp pattern
+// entry order, duplicates dropped) - every op that takes a comp pattern
 // therefore also takes a list.
 AE.findComps = function (nameOrIdOrPattern) {
     var proj = app.project;
@@ -222,11 +222,11 @@ AE.resolveLayers = function (comp, target) {
 // ---------- Enum-valued layer attributes ----------
 // JSON can't carry ExtendScript enum objects, so layer.set_props accepts
 // well-known string names and translates them here. A value that is not a
-// string, or a key/name this table doesn't know, passes through untouched —
+// string, or a key/name this table doesn't know, passes through untouched -
 // the plain assignment then succeeds on its own or reports its own error.
 // Built lazily; each enum family guarded so one missing global (old AE)
 // doesn't take the whole table down. Entries whose enum member resolved to
-// undefined are dropped — assigning undefined would throw a misleading error.
+// undefined are dropped - assigning undefined would throw a misleading error.
 AE._layerEnumMaps = null;
 AE.coerceLayerPropValue = function (key, val) {
     if (typeof val !== "string") return val;
@@ -282,7 +282,7 @@ AE.coerceLayerPropValue = function (key, val) {
                 stencilAlpha: BlendingMode.STENCIL_ALPHA, stencilLuma: BlendingMode.STENCIL_LUMA,
                 alphaAdd: BlendingMode.ALPHA_ADD, luminescentPremul: BlendingMode.LUMINESCENT_PREMUL
             };
-            // The API spells it SILHOUETE_* (one T) — an Adobe typo old enough
+            // The API spells it SILHOUETE_* (one T) - an Adobe typo old enough
             // to be contractual. Probe both spellings, keep whichever exists.
             var silA = BlendingMode.SILHOUETE_ALPHA;
             if (silA === undefined) silA = BlendingMode.SILHOUETTE_ALPHA;
@@ -299,7 +299,7 @@ AE.coerceLayerPropValue = function (key, val) {
                 ambient: LightType.AMBIENT
             };
         } catch (eLt) {}
-        // ENVIRONMENT is 24.3+ — probed separately so a build without it keeps
+        // ENVIRONMENT is 24.3+ - probed separately so a build without it keeps
         // the four classic light types even if the member access throws.
         try {
             if (maps.lightType && LightType.ENVIRONMENT !== undefined) {
@@ -631,8 +631,8 @@ AE.lightSourceLayer = function (light) {
 // ---------- Basic serialization ----------
 
 // Canonical item type label. An if/else chain, NOT a chained ternary:
-// ExtendScript parses `a ? b : c ? d : e` LEFT-associatively — as
-// `(a ? b : c) ? d : e` — so a ternary chain here would label every
+// ExtendScript parses `a ? b : c ? d : e` LEFT-associatively - as
+// `(a ? b : c) ? d : e` - so a ternary chain here would label every
 // item with the last branch. (Verified on AE 26.3 / ExtendScript 4.5.6.)
 AE.itemTypeName = function (item) {
     if (item instanceof CompItem) return "CompItem";
@@ -695,7 +695,7 @@ AE.serializeLayerSummary = function (layer) {
     try { if (typeof ParametricMeshLayer !== "undefined" && layer instanceof ParametricMeshLayer) type = "ParametricMeshLayer"; } catch (ePm) {}
     var out = {
         index: layer.index,
-        // Stable layer id (AE 22.0+) — survives reordering/renaming. null on older hosts.
+        // Stable layer id (AE 22.0+) - survives reordering/renaming. null on older hosts.
         id: AE.safeGet(function () { return layer.id; }, null),
         name: layer.name,
         type: type,
@@ -809,7 +809,7 @@ AE.valueToJson = function (val, _depth) {
         for (var i = 0; i < val.length; i++) arr.push(AE.valueToJson(val[i], (_depth || 0) + 1));
         return arr;
     }
-    // TextDocument special-case — check before generic array-like because
+    // TextDocument special-case - check before generic array-like because
     // TextDocument does not expose a length property.
     if (val.text !== undefined && typeof val.text === "string" && val.fontSize !== undefined) {
         var td = {
@@ -848,7 +848,7 @@ AE.valueToJson = function (val, _depth) {
             outTangents: AE.valueToJson(val.outTangents)
         };
     }
-    // MarkerValue — from marker keyframes (comp.markerProperty or layer.marker)
+    // MarkerValue - from marker keyframes (comp.markerProperty or layer.marker)
     if (val.comment !== undefined && val.chapter !== undefined) {
         return {
             __kind: "MarkerValue",
@@ -949,7 +949,7 @@ AE.serializeProperty = function (prop) {
                 inInterpName: AE.safeGet(function () { return AE.KEY_INTERP_NAMES[inInterp]; }, null),
                 outInterpName: AE.safeGet(function () { return AE.KEY_INTERP_NAMES[outInterp]; }, null)
             };
-            // Temporal ease (speed/influence) — only meaningful on bezier keys,
+            // Temporal ease (speed/influence) - only meaningful on bezier keys,
             // and only there does the extra bulk pay for itself (easing audits).
             try {
                 if (inInterp === KeyframeInterpolationType.BEZIER || outInterp === KeyframeInterpolationType.BEZIER) {
@@ -987,7 +987,7 @@ AE._serializeKeyExtras = function (prop, k, entry) {
     try { var lbl = prop.keyLabel(k); if (lbl) entry.label = lbl; } catch (e4) { /* keyLabel is AE 22.6+ */ }
 };
 
-/** KeyframeEase[] → [{speed, influence}, ...] (one per eased dimension). */
+/** KeyframeEase[] -> [{speed, influence}, ...] (one per eased dimension). */
 AE._serializeEase = function (eases) {
     if (!eases) return null;
     var arr = [];
@@ -997,7 +997,7 @@ AE._serializeEase = function (eases) {
     return arr;
 };
 
-/** [{speed, influence}, ...] → KeyframeEase[] (inverse of _serializeEase). */
+/** [{speed, influence}, ...] -> KeyframeEase[] (inverse of _serializeEase). */
 AE._deserializeEase = function (specs) {
     var arr = [];
     for (var i = 0; i < specs.length; i++) {
@@ -1009,7 +1009,7 @@ AE._deserializeEase = function (specs) {
 // opts.onlyModified: skip leaf properties still at their default value (no
 // keyframes, no expression, isModified false). Group skeletons are kept so
 // the EXISTENCE of an effect/mask still shows even when all its params are
-// default. When reading isModified throws, the property is kept — hiding
+// default. When reading isModified throws, the property is kept - hiding
 // data is the worse failure.
 AE.serializePropertyGroup = function (group, depth, maxDepth, opts) {
     if (depth === undefined) depth = 0;
@@ -1142,7 +1142,7 @@ AE.EXTRA_LAYER_GROUPS = ["ADBE Camera Options Group", "ADBE Light Options Group"
 
 /**
  * Whether an extra group carries live data on this layer (verified on AE 26.5
- * by writing values back). Skipped groups are hidden there — their values
+ * by writing values back). Skipped groups are hidden there - their values
  * cannot be read back into AE, so exporting them would only add noise:
  *   - Geometry Options (extrusion, plane curvature): 3D text/shape/footage only,
  *     never meshes or models;
@@ -1211,7 +1211,7 @@ AE.propertyGroupIsEmpty = function (g) {
 
 // opts.includeProperties=false skips the property tree entirely.
 // opts.detail="summary" keeps the tree but drops leaves still at their default
-// value (AE._propertyMatters) — the answer to 150KB-per-comp audits. Trees
+// value (AE._propertyMatters) - the answer to 150KB-per-comp audits. Trees
 // that exist on every layer (Transform, Material Options, Audio) collapse to
 // null when nothing in them was touched; Effects/Masks/Text/Contents keep
 // their skeleton so their existence still shows.
@@ -1274,7 +1274,7 @@ AE.serializeLayerFull = function (layer, opts) {
                 }
             } catch (eTr) { /* ignore */ }
         }
-        // Layer markers — layer.marker is a NamedGroup with keyframed MarkerValues
+        // Layer markers - layer.marker is a NamedGroup with keyframed MarkerValues
         try {
             var marker = layer.property("Marker");
             if (marker && marker.numKeys > 0) {
@@ -1337,7 +1337,7 @@ AE.removeAllKeys = function (prop) {
 };
 
 // Re-create keys from a snapshot whose times the caller may have remapped.
-// Two passes: values first, then interpolation attributes — writing bezier
+// Two passes: values first, then interpolation attributes - writing bezier
 // data while neighbours are still being inserted shifts the handles.
 AE.applyKeys = function (prop, keys) {
     var i, key, ki;
@@ -1378,8 +1378,8 @@ AE.applyKeys = function (prop, keys) {
 // bookkeeping that setTemporalEaseAtKey demands: spatial properties
 // (Position/Anchor Point) take exactly ONE KeyframeEase regardless of value
 // dimensions; everything else takes one per dimension. Same contract as the
-// keyframe.set_easing operation — this is its eval.run twin.
-// Speeds default to 0 (ease-style handles). Influence range is 0.1–100.
+// keyframe.set_easing operation - this is its eval.run twin.
+// Speeds default to 0 (ease-style handles). Influence range is 0.1-100.
 AE.setEase = function (prop, keyIndex, inInfluence, outInfluence, inSpeed, outSpeed) {
     if (inSpeed === undefined) inSpeed = 0;
     if (outSpeed === undefined) outSpeed = 0;
@@ -1428,7 +1428,7 @@ AE._applyShapeStyle = function (contents, opts) {
 // One call = one styled primitive: a new vector group holding the path plus
 // optional fill/stroke. `parent` is a ShapeLayer or a vector group. Returns
 // the created group. opts: { name, roundness (rect only), fill: [r,g,b(,a)],
-// fillOpacity, stroke: [r,g,b(,a)], strokeWidth }. Colors are 0–1.
+// fillOpacity, stroke: [r,g,b(,a)], strokeWidth }. Colors are 0-1.
 AE.rect = function (parent, size, position, opts) {
     opts = opts || {};
     var contents = AE._vectorContents(parent);
@@ -1459,8 +1459,8 @@ AE.ellipse = function (parent, size, position, opts) {
 // ---------- Filesystem ----------
 
 // Create the parent directory chain for a file path (string or File) and
-// return the File. AE's own render pipeline does NOT create output folders —
-// rq.render() dies with "Directory does not exist" — so every code path that
+// return the File. AE's own render pipeline does NOT create output folders -
+// rq.render() dies with "Directory does not exist" - so every code path that
 // points an output module at a file goes through this first.
 AE.ensureParentDir = function (pathOrFile) {
     var f = (pathOrFile instanceof File) ? pathOrFile : new File(pathOrFile);

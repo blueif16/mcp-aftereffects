@@ -2,8 +2,8 @@
 // Installed only when the global JSON is missing. Whether that is the case in
 // any given After Effects build is not something to rely on either way: the
 // fallback below is written to be safe on untrusted input regardless, because
-// everything the dispatcher reads — including caller-supplied project
-// documents travelling as `payload` — flows through JSON.parse.
+// everything the dispatcher reads - including caller-supplied project
+// documents travelling as `payload` - flows through JSON.parse.
 if (typeof JSON === "undefined" || !JSON || typeof JSON.stringify !== "function" || typeof JSON.parse !== "function") {
     (function () {
         var escMap = {
@@ -30,7 +30,7 @@ if (typeof JSON === "undefined" || !JSON || typeof JSON.stringify !== "function"
                 // where a Number, Array, or Property is needed". Every response
                 // carries a hyphenated UUID id, so that was every response: no
                 // file written, and the caller timing out after 60s.
-                // Only a string is a real hit — check the type, not the truth.
+                // Only a string is a real hit - check the type, not the truth.
                 var esc = escMap[ch];
                 if (typeof esc === "string") {
                     out += esc;
@@ -76,7 +76,7 @@ if (typeof JSON === "undefined" || !JSON || typeof JSON.stringify !== "function"
             // Crockford's four-stage check from json2.js: after neutralizing
             // escape sequences and whole string literals, whatever remains must
             // consist solely of JSON structural characters. Anything that could
-            // execute — a call, an identifier, an assignment — leaves a
+            // execute - a call, an identifier, an assignment - leaves a
             // character the final test rejects.
             //
             // The guard is NOT decoration. Untrusted content reaches here: the
@@ -85,7 +85,7 @@ if (typeof JSON === "undefined" || !JSON || typeof JSON.stringify !== "function"
             // contents of an arbitrary .json file the caller pointed at.
             var t = String(text);
             // U+2028/U+2029 are legal raw inside JSON strings but are line
-            // terminators to this ES3 parser — escape before validating.
+            // terminators to this ES3 parser - escape before validating.
             t = t.replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
             // Three stages, in this order: neutralize escape sequences, then
             // collapse every complete string/number/keyword to a single "]",

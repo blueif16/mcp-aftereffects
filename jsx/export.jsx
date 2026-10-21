@@ -1,4 +1,4 @@
-// mcp-aftereffects project export — walks the entire project and produces a JSON
+// mcp-aftereffects project export - walks the entire project and produces a JSON
 // document describing folders, comps (with full layer/property trees), solid
 // footage, and file footage references. ES3-compatible.
 
@@ -9,7 +9,7 @@ AE.EXPORT_SCHEMA_VERSION = 5;
 //     attrs, disabled expressions, separated dimensions, spatial/continuity key data, camera/light/style groups
 // v4: footage interpretation, image sequences with frame range, placeholders, proxies (footage + comps),
 //     footage frameRate/pixelAspect, project settings (color management, time display, expressions)
-// v5: Advanced 3D — text/shape/model/mesh layers carry threeDLayer, AV switches and Material Options
+// v5: Advanced 3D - text/shape/model/mesh layers carry threeDLayer, AV switches and Material Options
 //     (instanceof AVLayer is false for them on AE 26.5); ThreeDModelLayer sourceId; ParametricMeshLayer
 //     type + live mesh/bevel option groups; Material Assignment, Compositing/Displacement Options,
 //     model Animation Options; environment light source (attrs.lightSourceIndex)

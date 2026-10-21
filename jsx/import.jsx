@@ -1,4 +1,4 @@
-// mcp-aftereffects project import — reconstructs items and layers from a JSON
+// mcp-aftereffects project import - reconstructs items and layers from a JSON
 // document produced by AE.exportProject(). Returns a summary including an
 // ID remap table (old id -> new id) and a list of warnings for things that
 // could not be restored cleanly.
@@ -74,7 +74,7 @@ AE.importProject = function (doc, opts) {
     // (which creates both the Solid footage and a layer using it), then
     // delete the throwaway comp. The FootageItem persists in the project's
     // Solids folder.
-    var footageBindings = []; // { item, spec } — pixelAspect/proxy restore after creation
+    var footageBindings = []; // { item, spec } - pixelAspect/proxy restore after creation
     for (i = 0; i < items.length; i++) {
         var fi = items[i];
         if (fi.type !== "FootageItem") continue;
@@ -167,7 +167,7 @@ AE.importProject = function (doc, opts) {
     }
 
     // --- Pass 3: comps ---
-    var compBindings = []; // { compItem, spec } — for pass 4 layer population
+    var compBindings = []; // { compItem, spec } - for pass 4 layer population
     for (i = 0; i < items.length; i++) {
         var ci = items[i];
         if (ci.type !== "CompItem") continue;
@@ -206,9 +206,9 @@ AE.importProject = function (doc, opts) {
     for (var pf = 1; pf <= proj.numItems; pf++) {
         if (proj.item(pf) instanceof FolderItem) preexistingFolders[String(proj.item(pf).id)] = true;
     }
-    var deferredAll = [];   // { layer, name, comp, list } — hidden-at-the-time writes, retried later
+    var deferredAll = [];   // { layer, name, comp, list } - hidden-at-the-time writes, retried later
     var nullSourceIds = {}; // sources of null layers, recreated with addNull instead
-    var nullRebuilt = [];   // { source: new null source, specSourceId } — refiled in pass 7
+    var nullRebuilt = [];   // { source: new null source, specSourceId } - refiled in pass 7
     var itemSpecById = {};
     for (var isx = 0; isx < items.length; isx++) itemSpecById[String(items[isx].id)] = items[isx];
     for (var cb = 0; cb < compBindings.length; cb++) {
@@ -336,7 +336,7 @@ AE.importProject = function (doc, opts) {
                 if (lspec.textGroup && newLayer instanceof TextLayer) {
                     AE.applyPropertyGroup(newLayer.property("Text"), lspec.textGroup, warn, deferred);
                 }
-                // Shape layer contents — recursively recreate shape groups
+                // Shape layer contents - recursively recreate shape groups
                 if (lspec.contentsGroup && newLayer instanceof ShapeLayer) {
                     try {
                         var contentsRoot = newLayer.property("Contents");
@@ -345,7 +345,7 @@ AE.importProject = function (doc, opts) {
                         warn("shape contents import failed for '" + lspec.name + "': " + AE.errText(eShape));
                     }
                 }
-                // Time Remap — must be enabled BEFORE applying keyframes
+                // Time Remap - must be enabled BEFORE applying keyframes
                 if (lspec.timeRemapEnabled && AE.isAVLayer(newLayer)) {
                     try {
                         newLayer.timeRemapEnabled = true;
@@ -819,7 +819,7 @@ AE.applyPropertyValue = function (prop, pspec, deferred) {
         var unwrapped = AE.unwrapValue(val, (val.__kind === "TextDocument") ? AE.safeGet(function () { return prop.value; }, null) : null);
         if (unwrapped !== null && unwrapped !== undefined && !(pspec.keyframes && pspec.keyframes.length > 0)) {
             // A value the new layer already holds is not written: setValue
-            // stores through float32, so re-writing e.g. the 89.9999923018046°
+            // stores through float32, so re-writing e.g. the 89.9999923018046 deg
             // orientation AE gives an imported GLB would round it and shift
             // geometry edges by a pixel.
             var already = (typeof val === "number" || val instanceof Array) && AE._sameValue(AE.safeGet(function () { return AE.valueToJson(prop.value); }, null), val);
@@ -844,7 +844,7 @@ AE.applyPropertyValue = function (prop, pspec, deferred) {
             times.push(kf.time);
             values.push(kv);
         }
-        // Marker-valued keyframes must be set one at a time — setValuesAtTimes
+        // Marker-valued keyframes must be set one at a time - setValuesAtTimes
         // doesn't accept MarkerValue arrays.
         var isMarker = (pspec.keyframes[0].value && pspec.keyframes[0].value.__kind === "MarkerValue");
         if (isMarker) {
@@ -871,7 +871,7 @@ AE.applyPropertyValue = function (prop, pspec, deferred) {
             if (kfI.inEase && kfI.outEase && kfI.inEase.length > 0 && kfI.outEase.length > 0) {
                 try {
                     prop.setTemporalEaseAtKey(ki + 1, AE._deserializeEase(kfI.inEase), AE._deserializeEase(kfI.outEase));
-                } catch (eEz) { /* dimension mismatch or non-temporal — keep going */ }
+                } catch (eEz) { /* dimension mismatch or non-temporal - keep going */ }
             }
             if (kfI.inInterp != null && kfI.outInterp != null) {
                 try { prop.setInterpolationTypeAtKey(ki + 1, kfI.inInterp, kfI.outInterp); } catch (eI) {}
@@ -921,7 +921,7 @@ AE._sameValue = function (a, b) {
     return false;
 };
 
-/** True when a property already holds an exported (un-keyed) value — a hidden write that changes nothing. */
+/** True when a property already holds an exported (un-keyed) value - a hidden write that changes nothing. */
 AE._specMatchesProp = function (prop, pspec) {
     if (pspec.keyframes && pspec.keyframes.length > 0) return false;
     var cur = AE.safeGet(function () { return AE.valueToJson(prop.value); }, null);

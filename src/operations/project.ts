@@ -28,8 +28,12 @@ registerOp({
             if (${jsxVal(!!args.save)} && app.project.file) app.project.save();
             var f = new File(${jsxVal(args.path)});
             if (!f.exists) return { ok: false, error: "file not found: " + ${jsxVal(args.path)} };
+            // Close first, as project.new does: app.open on a dirty project pops "Save changes?",
+            // and its default (Save) on an untitled project opens a Save As browser that blocks scripting.
+            app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
             app.open(f);
-            return { ok: true, numItems: app.project.numItems, file: app.project.file.fsName.replace(/\\\\/g,"/") };
+            // An .aep from an older AE version opens converted and untitled: file is null until saved.
+            return { ok: true, numItems: app.project.numItems, file: app.project.file ? app.project.file.fsName.replace(/\\\\/g,"/") : null, converted: !app.project.file };
         `;
   },
 });

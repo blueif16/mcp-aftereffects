@@ -1,17 +1,17 @@
-// mcp-aftereffects toolkit — higher-level building blocks shared by the
+// mcp-aftereffects toolkit - higher-level building blocks shared by the
 // composite operations (keyframe.apply, layer.set_anchor, comp.resize,
-// shape.group_bounds, mask geometry, layer.split_groups, …) and available to
+// shape.group_bounds, mask geometry, layer.split_groups, ...) and available to
 // eval.run. Included by dispatcher.jsx AFTER helpers.jsx and import.jsx: it
-// relies on AE.unwrapValue from import.jsx. ES3 only — var, function(), for.
+// relies on AE.unwrapValue from import.jsx. ES3 only - var, function(), for.
 
 var AE = AE || {};
 
 // ---------- Separated dimensions ----------
 
 // The follower properties that hold the data of a separated property, or
-// null when the property is not separated. After "Separate Dimensions" — and
+// null when the property is not separated. After "Separate Dimensions" - and
 // on layers produced by "Create Shapes from Vector Layer", which can
-// arrive separated — the leader (ADBE Position) rejects setValue with an error AE
+// arrive separated - the leader (ADBE Position) rejects setValue with an error AE
 // never displays; X/Y/Z Position own the values and keys. Every write in this
 // file and in the generated operations goes through this check so a caller
 // never has to know which shape the property is in.
@@ -20,7 +20,7 @@ AE.separationFollowers = function (prop) {
     try { sep = prop.dimensionsSeparated === true; } catch (eSep) { return null; }
     if (!sep) return null;
     // A 2D layer's separated Position still reports a 3-component,
-    // ThreeD_SPATIAL value and hands out a Z follower — which is HIDDEN, and
+    // ThreeD_SPATIAL value and hands out a Z follower - which is HIDDEN, and
     // setValue on it throws ("the property or a parent property is hidden").
     // Only the owning layer's 3D switch says whether Z is live (verified on
     // AE 26.3: neither the value length nor propertyValueType does).
@@ -51,7 +51,7 @@ AE.ownerLayer = function (prop) {
 };
 
 // Native value for a JSON value: __kind-tagged objects (Shape, TextDocument,
-// MarkerValue — the export format) become their ExtendScript twins; plain
+// MarkerValue - the export format) become their ExtendScript twins; plain
 // numbers/arrays pass through. `prop` supplies the TextDocument template.
 AE.nativeValue = function (prop, value) {
     if (value === null || value === undefined) return value;
@@ -70,7 +70,7 @@ AE._componentFor = function (value, d, count) {
     return value;
 };
 
-// Set a property's value — or a key at `time` — separated-dimension safe and
+// Set a property's value - or a key at `time` - separated-dimension safe and
 // __kind aware. Returns how many properties were written.
 AE.writeValue = function (prop, value, time) {
     var followers = AE.separationFollowers(prop);
@@ -176,7 +176,7 @@ AE._interpEnum = function (name) {
 // Ease is written first, then the interpolation types: setting ease flips
 // BOTH sides to BEZIER, so the declared types are re-asserted afterwards.
 // That is how easeIn keeps a LINEAR out side (AE's own "Easy Ease In"), and
-// why 'hold' touches only the OUT side — an incoming HOLD makes the segment
+// why 'hold' touches only the OUT side - an incoming HOLD makes the segment
 // before the key evaluate to the previous key's value, which is how a
 // linear fade ending in a "hold" key disappears (the trap behind
 // keyframe.set_easing's symmetric 'hold' preset).
@@ -219,13 +219,13 @@ AE.applyKeyInterp = function (prop, ki, spec, fallback) {
     }
 };
 
-// Write a list of key specs ({ time, value, interp?, … }) to a property in
-// one go: all values first, then all interpolation — writing bezier data
+// Write a list of key specs ({ time, value, interp?, ... }) to a property in
+// one go: all values first, then all interpolation - writing bezier data
 // while neighbours are still being inserted shifts the handles. Separated
 // dimensions are handled (each follower gets its component).
 // opts: { replace: drop existing keys first, interp: fallback interp,
 //         spatialTangents: 'linear' zeroes the spatial tangents (straight
-//         motion paths) — default leaves AE's auto-bezier }.
+//         motion paths) - default leaves AE's auto-bezier }.
 AE.applyKeySpecs = function (prop, specs, opts) {
     opts = opts || {};
     var followers = AE.separationFollowers(prop);
@@ -311,7 +311,7 @@ AE.bakeKeysAtTime = function (root, time) {
 // Run fn() with exactly `layers` selected in `comp`, then restore the user's
 // selection. "selected" is an addressing mode elsewhere in the registry and
 // is reported in the ambient context, so a menu command must not leave it
-// rewritten. Layer references, not indices — commands insert layers.
+// rewritten. Layer references, not indices - commands insert layers.
 AE.withSelection = function (comp, layers, fn) {
     var prev = [];
     for (var i = 1; i <= comp.numLayers; i++) {
@@ -329,7 +329,7 @@ AE.withSelection = function (comp, layers, fn) {
 };
 
 // Snapshot a comp's layer ids so AE.layersSince can list the layers a
-// command, copyToComp or duplicate created — by identity, not by assuming
+// command, copyToComp or duplicate created - by identity, not by assuming
 // where they landed. Pre-22 hosts (no Layer.id) fall back to "the new layers
 // are the top numLayers - count", which is right for copyToComp and menu
 // commands but not for duplicate().
@@ -412,7 +412,7 @@ AE.moveAnchor = function (layer, target) {
     var xf = layer.transform;
     var ap = xf.anchorPoint;
     var pos = xf.position;
-    if (ap.numKeys > 0) throw new Error("anchor point has keyframes — bake or remove them first");
+    if (ap.numKeys > 0) throw new Error("anchor point has keyframes - bake or remove them first");
     var oldA = ap.value;
     var dims = oldA.length;
     var newA = [], delta = [];
@@ -434,7 +434,7 @@ AE.moveAnchor = function (layer, target) {
         var yr = AE.safeGet(function () { return xf.property("ADBE Rotate Y").value; }, 0);
         var ori = AE.safeGet(function () { return xf.property("ADBE Orientation").value; }, [0, 0, 0]);
         if (xr !== 0 || yr !== 0 || ori[0] !== 0 || ori[1] !== 0 || ori[2] !== 0) {
-            warn.push("3D X/Y rotation or orientation is not compensated — verify the layer did not shift");
+            warn.push("3D X/Y rotation or orientation is not compensated - verify the layer did not shift");
         }
     }
     var rad = rotDeg * Math.PI / 180;
@@ -442,7 +442,7 @@ AE.moveAnchor = function (layer, target) {
     if (dims > 2) w.push(s[2]);
     var animatedBasis = false;
     try { animatedBasis = xf.scale.numKeys > 0 || rotProp.numKeys > 0; } catch (eK) {}
-    if (animatedBasis) warn.push("scale/rotation are animated — compensation uses their current-time value");
+    if (animatedBasis) warn.push("scale/rotation are animated - compensation uses their current-time value");
     ap.setValue(newA);
     var shifted = AE.offsetValue(pos, w);
     return { anchorPoint: newA, positionDelta: w, positionKeysShifted: shifted, warnings: warn };
@@ -519,7 +519,7 @@ AE._pathBoundPoints = function (shape) {
     return pts;
 };
 
-// Apply a vector group's Transform (anchor → scale → rotation → position;
+// Apply a vector group's Transform (anchor -> scale -> rotation -> position;
 // skew is reported, not applied) to layer-space points.
 AE._applyVectorTransform = function (pts, xfGroup, time, state) {
     if (!xfGroup) return pts;
@@ -546,7 +546,7 @@ AE._applyVectorTransform = function (pts, xfGroup, time, state) {
 // Bounding points of everything inside a Contents group, in the coordinate
 // space of that group (nested groups are transformed on the way up).
 // `state` collects stroke widths and the modifiers whose effect on the
-// bounds is not modelled (Trim/Repeater/Offset/…).
+// bounds is not modelled (Trim/Repeater/Offset/...).
 AE.contentsBoundPoints = function (contents, time, state) {
     var pts = [];
     function push(list) { for (var i = 0; i < list.length; i++) pts.push(list[i]); }
@@ -609,7 +609,7 @@ AE._boundsOfPoints = function (pts, pad) {
 // Bounds of one vector group in LAYER space (the group's own transform
 // applied), stroke width padded in when opts.includeStroke. Geometry-based:
 // exact for paths/rects/ellipses; stars use the outer-radius circle and
-// path modifiers (Trim, Repeater, Offset, …) are listed in `approximate`.
+// path modifiers (Trim, Repeater, Offset, ...) are listed in `approximate`.
 AE.shapeGroupBounds = function (group, opts) {
     opts = opts || {};
     var state = { maxStroke: 0, approximate: [] };
@@ -703,7 +703,7 @@ AE._roundJson = function (val, precision) {
 };
 
 // Canonical text for a property group: matchNames and rounded values, no
-// display names — two groups drawn the same way hash the same even after
+// display names - two groups drawn the same way hash the same even after
 // one was renamed. Used for duplicate detection when merging comps.
 AE.canonicalGroup = function (group, precision, time) {
     var parts = [];
@@ -800,5 +800,5 @@ AE.applyTemplate = function (target, name, label) {
             try { target.applyTemplate(avail[i]); return null; } catch (eT3) {}
         }
     }
-    return label + ": no template named '" + name + "' — available: " + avail.join(" | ");
+    return label + ": no template named '" + name + "' - available: " + avail.join(" | ");
 };

@@ -4,6 +4,8 @@
 //   2. injection safety of the JSX we generate from TypeScript — no tool
 //      argument may reach the generated script without going through jsxVal
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -25,6 +27,23 @@ describe("jsx/ ES3 lint", () => {
       .map((f) => `${f.file}:${f.line} [${f.rule}] ${f.description}\n    > ${f.text}`)
       .join("\n");
     expect(errors.length, report).toBe(0);
+  });
+});
+
+describe("jsx/ encoding", () => {
+  it("is ASCII-only", () => {
+    // ExtendScript reads BOM-less files in the system codepage. Under zh_CN (GBK)
+    // a UTF-8 dash at a line end swallowed the newline and broke agent.jsx and
+    // dispatcher.jsx ("Expected: )") while the same bytes were harmless in English.
+    const bad = readdirSync(JSX_DIR)
+      .filter((f) => f.endsWith(".jsx"))
+      .flatMap((f) =>
+        readFileSync(join(JSX_DIR, f), "utf8")
+          .split("\n")
+          .map((text, i) => ({ f, line: i + 1, text }))
+          .filter((l) => /[^\x00-\x7f]/.test(l.text)),
+      );
+    expect(bad.map((l) => `${l.f}:${l.line} > ${l.text}`).join("\n")).toBe("");
   });
 });
 

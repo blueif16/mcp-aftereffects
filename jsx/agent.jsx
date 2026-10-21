@@ -1,10 +1,10 @@
-// mcp-aftereffects resident agent — the PULL path.
+// mcp-aftereffects resident agent - the PULL path.
 //
 // Lives inside one After Effects instance for the whole session and serves
 // that instance's own mailbox, <runtime>/instances/<id>/, from a scheduled
 // task. It gets there through the user-level Scripts/Startup folder: the
 // stub that `mcp-aftereffects install-agent` drops there $.evalFile's this
-// file at startup, in EVERY instance — including the ones started with
+// file at startup, in EVERY instance - including the ones started with
 // `AfterFX.exe -m`, which the push path (`-r`) can never reach: `-r` is handed
 // to whichever AE registered as THE running instance, `-m` instances never
 // register, and with none registered the launched AfterFX.exe boots a
@@ -12,7 +12,7 @@
 // quits. (Verified on AE 26.3.)
 //
 // Identity. The instance id is, in order:
-//   1. AE_MCP_INSTANCE from the AE process's own environment — `$.getenv`
+//   1. AE_MCP_INSTANCE from the AE process's own environment - `$.getenv`
 //      reads the launching shell's variable, so `set AE_MCP_INSTANCE=shotA`
 //      before `AfterFX.exe -m` names the instance deterministically;
 //   2. otherwise a random `ae-xxxxxx`. The heartbeat carries the open
@@ -21,11 +21,11 @@
 //
 // Each tick (250 ms): refresh the heartbeat (every second, or on any state
 // change), then serve at most ONE pending request through AE_MCP.serveRequest
-// (jsx/serve.jsx — the same code the dispatcher uses). The heartbeat is
+// (jsx/serve.jsx - the same code the dispatcher uses). The heartbeat is
 // flagged `busy` around a request so a stale timestamp during a long call
 // (ticks do not fire while a script runs) is not mistaken for a dead instance.
 //
-// SECURITY: same trust boundary as the shared mailbox — whoever can write
+// SECURITY: same trust boundary as the shared mailbox - whoever can write
 // into <runtime>/instances/<id>/ executes code inside this AE. The directory
 // sits under the per-user temp dir like the rest of the runtime. Two things
 // differ from the dispatcher, and both come from being resident:
@@ -122,8 +122,8 @@
     // --- Where the mailbox lives ------------------------------------------
     // Pinned by the install stub: $.global.AE_MCP_AGENT_MAILBOX is the
     // server's RUNTIME_DIR at install time (computed from os.tmpdir(), which
-    // need not equal Folder.temp on macOS). Without a stub — this file
-    // evaluated some other way — the default both sides compute. Never the
+    // need not equal Folder.temp on macOS). Without a stub - this file
+    // evaluated some other way - the default both sides compute. Never the
     // runtime-dir.txt pointer (see the SECURITY note above): a server running
     // with a custom AE_MCP_RUNTIME_DIR needs `install-agent` re-run, and
     // `agent-status` reports the stub as stale until then.
@@ -178,7 +178,7 @@
                     info.project = normalizePath(proj.file.fsName);
                     info.projectName = String(proj.file.displayName);
                 }
-            } catch (eProj) { /* project unreadable — report what we have */ }
+            } catch (eProj) { /* project unreadable - report what we have */ }
             return info;
         }
 

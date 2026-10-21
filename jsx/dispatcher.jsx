@@ -1,4 +1,4 @@
-// mcp-aftereffects dispatcher — invoked by `AfterFX.exe -r dispatcher.jsx`
+// mcp-aftereffects dispatcher - invoked by `AfterFX.exe -r dispatcher.jsx`
 // (Windows) or an osascript DoScript bootstrap (macOS). This is the PUSH path.
 //
 // Contract with the Node side:
@@ -8,17 +8,17 @@
 //   3. We locate the mailbox, pick the OLDEST pending request-*.json, and hand
 //      it to AE_MCP.serveRequest (jsx/serve.jsx), which deletes it
 //      (consume-on-read), evals `code` and writes <runtime>/response-<id>.json.
-//   4. Node polls for response-<id>.json — only ever its own.
+//   4. Node polls for response-<id>.json - only ever its own.
 //
 // Per-id files, not a single request.json/response.json pair: two MCP clients
 // (or two server processes) share one AE instance and therefore one mailbox.
 // With a single pair, one client could delete another's response or overwrite
-// an unconsumed request. With per-id files neither is expressible — each
+// an unconsumed request. With per-id files neither is expressible - each
 // dispatcher run consumes exactly one request and answers exactly its author.
 //
 // Consume-on-read matters: when a call times out Node-side, its spawned
 // dispatcher run may still be queued inside AE. Without consumption that stale
-// run would pick up another pending request and execute it — while that
+// run would pick up another pending request and execute it - while that
 // request's own spawn executes it a second time (double mutation). With
 // consumption, exactly one dispatcher run executes each request; a spawn that
 // finds no pending request logs and exits WITHOUT writing anything.
@@ -66,13 +66,13 @@
 
         // --- Locate the mailbox --------------------------------------------
         // SECURITY: whatever directory we pick, we execute the `code` string of
-        // a request found there. There is no signature to check — the mailbox
+        // a request found there. There is no signature to check - the mailbox
         // IS the trust boundary, and the capability policy (AE_MCP_READONLY,
         // AE_MCP_ENABLE_EVAL, category allowlist) lives entirely on the Node
         // side and cannot help here. So the list of places we are willing to
         // read from is kept as short as it can be:
         //
-        //   0. $.global.AE_MCP_RUNTIME_DIR_OVERRIDE — set by the macOS
+        //   0. $.global.AE_MCP_RUNTIME_DIR_OVERRIDE - set by the macOS
         //      launcher's DoScript bootstrap, which (unlike `-r`) can pass data
         //      in. It names the exact mailbox of the server that launched THIS
         //      run. When it is present it is used ALONE: falling back would mean
@@ -81,7 +81,7 @@
         //      var itself is invisible to us: `-r` is delivered to the
         //      already-running AE process, whose environment is not the
         //      spawner's).
-        //   2. <temp>/mcp-aftereffects/runtime — the default both sides compute.
+        //   2. <temp>/mcp-aftereffects/runtime - the default both sides compute.
         //
         // The in-package location (<script>/../runtime) is deliberately NOT a
         // candidate: an install directory is far more likely to be writable by
@@ -91,14 +91,14 @@
             try {
                 var injected = $.global.AE_MCP_RUNTIME_DIR_OVERRIDE;
                 if (injected) {
-                    // Authoritative and exclusive — see above.
+                    // Authoritative and exclusive - see above.
                     return [normalizePath(String(injected))];
                 }
-            } catch (eInjected) { /* not injected — a Windows `-r` launch */ }
+            } catch (eInjected) { /* not injected - a Windows `-r` launch */ }
             var tempRoot = null;
             try {
                 tempRoot = normalizePath(Folder.temp.fsName) + "/mcp-aftereffects";
-            } catch (eTemp) { /* no temp folder — nothing we are willing to read */ }
+            } catch (eTemp) { /* no temp folder - nothing we are willing to read */ }
 
             if (tempRoot !== null) {
                 try {
@@ -114,7 +114,7 @@
                             }
                         }
                     }
-                } catch (ePtr) { /* unreadable pointer — use the default below */ }
+                } catch (ePtr) { /* unreadable pointer - use the default below */ }
                 dirs.push(tempRoot + "/runtime");
             }
 
@@ -136,7 +136,7 @@
         if (requestFile === null) {
             // Nothing pending: normally this means another dispatcher run
             // (spawned earlier, executed late by AE) already consumed the
-            // request and will write the response — so exit WITHOUT writing
+            // request and will write the response - so exit WITHOUT writing
             // anything, or we would clobber it. It can ALSO mean the two sides
             // disagree about where the mailbox is (e.g. AE running as a
             // different user, so a different Folder.temp). Leave a breadcrumb
@@ -158,7 +158,7 @@
         var logPath = runtimeDir + "/dispatcher.log";
         fatalLogPath = logPath;
 
-        // Top-of-dispatcher marker — proves we reached this point even if later
+        // Top-of-dispatcher marker - proves we reached this point even if later
         // steps fail. Always attempted; errors silenced.
         try {
             var startMarker = new File(runtimeDir + "/dispatcher_start.txt");
@@ -174,7 +174,7 @@
     // --- Top-level guard ---------------------------------------------------
     // Nothing may escape from here into AE's modal error dialog. A modal blocks
     // every subsequent `-r` launch for the rest of the session, which the Node
-    // side can only observe as call after call timing out on the busy lock — a
+    // side can only observe as call after call timing out on the busy lock - a
     // symptom that says nothing about the cause. Losing a log line is the
     // cheaper failure, so this catch swallows.
     try {
@@ -189,6 +189,6 @@
                     fatalLog.close();
                 }
             }
-        } catch (eSilent) { /* deliberately silent — see above */ }
+        } catch (eSilent) { /* deliberately silent - see above */ }
     }
 })();
