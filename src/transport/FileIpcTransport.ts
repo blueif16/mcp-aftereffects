@@ -150,6 +150,16 @@ interface DispatcherResponse {
  * isn't installed yet; the helpful "set AE_MCP_EXE" error surfaces per call.
  * Pull never needs the executable at all.
  */
+/**
+ * A finished `aerender` that never exits leaves AfterFX.com holding After Effects, so every later call times out with no
+ * dialog to blame (ae_playground, 2026-10-30). Named in every TIMEOUT hint. The hint never tells anyone to kill it: the
+ * user decides.
+ */
+export const LEFTOVER_RENDER_HINT =
+  " Also check for a render process left over from a finished render: aerender.exe / AfterFX.com can print its last line and never exit, " +
+  "and then holds After Effects (check `tasklist.exe | findstr /i \"aerender AfterFX\"` on Windows; a long-running one with " +
+  "no CPU is that case; stopping it is the user's call).";
+
 export class FileIpcTransport implements AeTransport {
   private afterFxPath: string | null = null;
   private inflight: Promise<unknown> = Promise.resolve();
@@ -358,7 +368,7 @@ export class FileIpcTransport implements AeTransport {
       durationMs: Date.now() - started,
       hint:
         "Is After Effects showing a modal dialog, or rendering/previewing? Scripts wait for both. " +
-        "For a long operation, raise timeoutMs.",
+        "For a long operation, raise timeoutMs." + LEFTOVER_RENDER_HINT,
     });
   }
 
@@ -412,7 +422,7 @@ export class FileIpcTransport implements AeTransport {
           hint:
             `The lock (${BUSY_LOCK_PATH}) is refreshed while its owner is alive and expires ` +
             `${Math.round(BUSY_LOCK_STALE_MS / 1000)}s after the owner stops. If this persists, ` +
-            "check AE for a stuck script or a modal dialog, and avoid running two MCP servers against one AE.",
+            "check AE for a stuck script or a modal dialog, and avoid running two MCP servers against one AE." + LEFTOVER_RENDER_HINT,
         },
       );
     }
@@ -523,7 +533,8 @@ export class FileIpcTransport implements AeTransport {
             (process.platform === "darwin"
               ? "Is your MCP client allowed to control After Effects (System Settings → Privacy & Security → Automation)? " +
                 "(pkill -9 -f 'After Effects' recovers a stuck AE)"
-              : "(taskkill /F /IM AfterFX.exe recovers a stuck AE)"),
+              : "(taskkill /F /IM AfterFX.exe recovers a stuck AE)") +
+            LEFTOVER_RENDER_HINT,
         },
       );
     } finally {
