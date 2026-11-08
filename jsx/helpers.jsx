@@ -1041,7 +1041,9 @@ AE.serializePropertyGroup = function (group, depth, maxDepth, opts) {
             // A text animator's Properties group lists all ~100 animatable
             // properties; the ones not added are placeholders that cannot
             // take an expression (and ignore setValue).
-            if (group.matchName === "ADBE Text Animator Properties" && !AE.safeGet(function () { return child.canSetExpression; }, true)) continue;
+            // Stroke > Dashes does the same: Dash 2..3, Gap 1..3 and Offset
+            // are listed from the start but hidden (and read-only) until added.
+            if ((group.matchName === "ADBE Text Animator Properties" || group.matchName === "ADBE Vector Stroke Dashes") && !AE.safeGet(function () { return child.canSetExpression; }, true)) continue;
             out.properties.push(AE.serializeProperty(child));
         } else if (child.propertyType === PropertyType.NAMED_GROUP || child.propertyType === PropertyType.INDEXED_GROUP) {
             out.groups.push(AE.serializePropertyGroup(child, depth + 1, maxDepth, opts));

@@ -552,6 +552,12 @@ AE.importShapeContents = function (target, spec, warn) {
             var prop = null;
             try { prop = target.property(ps.matchName); } catch (e1) {}
             if (!prop) { try { prop = target.property(ps.name); } catch (e2) {} }
+            // Stroke > Dashes lists its Dash/Gap/Offset slots from the start but
+            // hides them (setValue throws) until addProperty; export lists only
+            // the added ones, so add each before writing it.
+            if (target.matchName === "ADBE Vector Stroke Dashes" && (!prop || AE._isPlaceholder(target, prop))) {
+                prop = AE._addChild(target, ps.matchName) || prop;
+            }
             if (!prop) continue;
             try { AE.applyPropertyValue(prop, ps); } catch (eAp) { if (warn) warn("shape property '" + ps.name + "': " + AE.errText(eAp)); }
         }
