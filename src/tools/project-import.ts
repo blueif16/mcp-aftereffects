@@ -7,6 +7,7 @@ import { footagePathHolders, resolveFootagePaths } from "../footage-paths.js";
 import { validateAeProjectDoc } from "../validate.js";
 import { defineTool, jsonResult, toMcpResult } from "./define-tool.js";
 import { withAfterEffectsForeground } from "../transport/dialogs.js";
+import { annotateDrops } from "./import-drops.js";
 
 export const projectImportTool = defineTool({
   name: "ae_project_import_json",
@@ -58,6 +59,12 @@ export const projectImportTool = defineTool({
       .optional()
       .describe(
         "Footage path prefix rewrites applied before `baseDir`, first match wins, e.g. [{from: 'D:/old-media', to: 'E:/media'}].",
+      ),
+    strict: z
+      .boolean()
+      .optional()
+      .describe(
+        "Fail (PARTIAL_IMPORT, listing what was lost) when any property or group with a value, keys or an expression could not be imported. Without it the import succeeds and the result carries `dropped` and a hint. The project is already changed either way.",
       ),
     projectSettings: z
       .boolean()
@@ -167,6 +174,13 @@ export const projectImportTool = defineTool({
     const result = documentUsesLayerStyles(doc)
       ? await withAfterEffectsForeground(run)
       : await run();
+    const dropped = result.ok ? annotateDrops(result) : [];
+    if (args.strict && dropped.length) {
+      return errorResult("PARTIAL_IMPORT", `${dropped.length} value(s) were not imported:\n  ` + dropped.slice(0, 20).join("\n  "), {
+        details: { dropped, result: result.result },
+        hint: "The project was already changed. Fix the document (see `dropped`) and import again, or remove the partial items.",
+      });
+    }
     return toMcpResult(result);
   },
 });

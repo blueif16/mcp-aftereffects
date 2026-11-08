@@ -46,6 +46,8 @@ export type AeErrorCode =
   | "INVALID_ARGS"
   /** A project JSON document failed schema validation. */
   | "VALIDATION"
+  /** A project import ran but could not import some values (strict mode); the project is already changed. */
+  | "PARTIAL_IMPORT"
   /** Blocked by AE_MCP_READONLY / AE_MCP_ALLOW_CATEGORIES / missing AE_MCP_ENABLE_EVAL. */
   | "FORBIDDEN"
   /** Node-side read/write of a path the caller supplied. */

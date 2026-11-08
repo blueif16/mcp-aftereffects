@@ -626,9 +626,26 @@ AE.applyPropertyGroup = function (target, spec, warn, deferred) {
                 try { prop = target.property(pspec.name); } catch (e2) {}
             }
             if (!prop) prop = AE._addChild(target, pspec.matchName);
-            else if (AE._isPlaceholder(target, prop)) prop = AE._addChild(target, pspec.matchName) || prop;
+            else if (AE._isPlaceholder(target, prop)) {
+                // A listed-but-never-added member (found by display name, e.g. a misspelt matchName) ignores setValue.
+                var addedChild = AE._addChild(target, pspec.matchName);
+                if (!addedChild) {
+                    if (warn && (pspec.keyframes && pspec.keyframes.length || pspec.expression || (pspec.value !== undefined && pspec.value !== null))) {
+                        warn("DROPPED: property '" + pspec.matchName + "' is not a member of '" + target.matchName + "' (it only matched '" + prop.matchName + "' by display name)");
+                    }
+                    continue;
+                }
+                prop = addedChild;
+            }
             if (!prop) {
-                // Some properties (like Separate Dimensions placeholders) may not exist on all layer types
+                // Some properties (like Separate Dimensions placeholders) may not exist on all layer types.
+                // But a property that carries a value, keys or an expression and cannot be found or added is
+                // lost data (a wrong matchName, or an animator property written outside its
+                // "ADBE Text Animator Properties" group): say so, never drop it silently.
+                var carries = pspec.keyframes && pspec.keyframes.length || pspec.expression || (pspec.value !== undefined && pspec.value !== null);
+                if (warn && carries && !AE._benignMissing(pspec.matchName)) {
+                    warn("DROPPED: property '" + pspec.matchName + "' not found and cannot be added under '" + target.matchName + "'");
+                }
                 continue;
             }
             try { AE.applyPropertyValue(prop, pspec, deferred); }
@@ -652,7 +669,7 @@ AE.applyPropertyGroup = function (target, spec, warn, deferred) {
             }
             if (!sub) sub = AE._addChild(target, gspec.matchName);
             if (!sub) {
-                if (warn && indexed) warn("could not add " + gspec.matchName + " to " + target.matchName);
+                if (warn && (indexed || AE._groupCarriesData(gspec))) warn("DROPPED: group '" + gspec.matchName + "' could not be added to '" + target.matchName + "'");
                 continue;
             }
             if (indexed && gspec.name && sub.name !== gspec.name) { try { sub.name = gspec.name; } catch (eNm) {} }
@@ -713,6 +730,21 @@ AE.ensureLayerStyles = function (layer, spec, warn) {
  */
 AE._isPlaceholder = function (target, prop) {
     try { return prop.canSetExpression === false && target.canAddProperty(prop.matchName); } catch (e) { return false; }
+};
+
+/** Placeholders that are legitimately absent on some layer types (separate-dimension slots, text-only and 3D-only members). */
+AE._benignMissing = function (matchName) {
+    return /Separate (X|Y|Z)|Position_(0|1|2)$|^ADBE Orientation/.test(matchName || "");
+};
+
+/** True when a group spec holds a property with a value, keys or an expression (recursively). */
+AE._groupCarriesData = function (g) {
+    if (!g) return false;
+    var ps = g.properties || [];
+    for (var i = 0; i < ps.length; i++) if (ps[i].keyframes && ps[i].keyframes.length || ps[i].expression || (ps[i].value !== undefined && ps[i].value !== null)) return true;
+    var gs = g.groups || [];
+    for (var j = 0; j < gs.length; j++) if (AE._groupCarriesData(gs[j])) return true;
+    return false;
 };
 
 /** addProperty(matchName) when the group accepts it; null otherwise. */
