@@ -17,7 +17,7 @@ Documents written by this fork (schema 5) do not load in unpatched kumo; it read
 
 1. Build, on any OS:
    ```bash
-   git clone <this repo's URL> && cd mcp-aftereffects
+   git clone https://github.com/blueif16/mcp-aftereffects.git && cd mcp-aftereffects
    npm ci && npm run build && npm test     # expect 112 live-AE tests skipped off an AE machine
    ```
 2. Copy `dist/`, `jsx/`, `package.json` and `node_modules/` into `<kumo-install>`, a fixed folder apart from your clone. To update later, rebuild and copy `dist/` and `jsx/` again. From WSL, `scripts/deploy-windows.sh /mnt/c/Users/<you>/AppData/Local/kumo` does this.
