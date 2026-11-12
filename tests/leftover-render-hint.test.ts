@@ -1,4 +1,4 @@
-// Every TIMEOUT hint names a finished aerender that never exited (ae_playground, 2026-10-30), and none tells anyone to kill it.
+// Every TIMEOUT hint names a finished aerender that never exited (2026-10-30), and none tells anyone to kill it.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 

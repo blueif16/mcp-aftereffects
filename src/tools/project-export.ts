@@ -47,7 +47,7 @@ export const projectExportTool = defineTool({
         "INVALID_ARGS",
         `relativeTo must be an absolute directory, got '${args.relativeTo}'`,
         {
-          hint: "Pass the media root as an absolute path, e.g. D:/studio-mirror/my-video.",
+          hint: "Pass the media root as an absolute path, e.g. D:/media/my-video.",
         },
       );
     }

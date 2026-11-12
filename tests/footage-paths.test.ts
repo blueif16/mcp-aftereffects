@@ -30,7 +30,7 @@ describe("isAbsolutePath", () => {
     ["D:/a/b.png", true],
     ["d:\\a\\b.png", true],
     ["//server/share/x.mov", true],
-    ["/home/ran/x.mov", true],
+    ["/home/user/x.mov", true],
     ["assets/x.mov", false],
     ["./x.mov", false],
     ["../x.mov", false],

@@ -152,7 +152,7 @@ interface DispatcherResponse {
  */
 /**
  * A finished `aerender` that never exits leaves AfterFX.com holding After Effects, so every later call times out with no
- * dialog to blame (ae_playground, 2026-10-30). Named in every TIMEOUT hint. The hint never tells anyone to kill it: the
+ * dialog to blame (2026-10-30). Named in every TIMEOUT hint. The hint never tells anyone to kill it: the
  * user decides.
  */
 export const LEFTOVER_RENDER_HINT =

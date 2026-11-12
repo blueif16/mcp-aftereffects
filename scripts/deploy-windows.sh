@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Deploy this checkout (dist + jsx) to the Windows folder AE sessions run kumo from.
-#   scripts/deploy-windows.sh            -> %LOCALAPPDATA%\ae_playground\kumo (the live one)
-#   scripts/deploy-windows.sh kumo-dev   -> %LOCALAPPDATA%\ae_playground\kumo-dev (staging; seeded from the live folder's node_modules)
+# Deploy this checkout (dist + jsx) from WSL to a Windows folder that After Effects sessions run kumo from.
+#   KUMO_DEPLOY_DIR=/mnt/c/Users/<you>/AppData/Local/kumo scripts/deploy-windows.sh
+#   scripts/deploy-windows.sh /mnt/c/Users/<you>/AppData/Local/kumo      (same, path as the argument)
+# A new folder gets node_modules and package.json from this checkout (production dependencies only:
+# run `npm ci --omit=dev` on the Windows side if a dependency has native parts); an existing one keeps its node_modules.
 # Running MCP servers keep the old code until their session reconnects (/mcp).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-name=${1:-kumo}
-base=/mnt/c/Users/ran/AppData/Local/ae_playground
-dest=$base/$name
-[ -d "$base/kumo/node_modules" ] || { echo "no live kumo folder at $base/kumo"; exit 1; }
+dest=${1:-${KUMO_DEPLOY_DIR:-}}
+[ -n "$dest" ] || { echo "usage: $0 <install folder, as a /mnt/... path>  (or set KUMO_DEPLOY_DIR)"; exit 2; }
 npm run build >/dev/null
-if [ ! -d "$dest" ]; then mkdir -p "$dest"; cp -r "$base/kumo/node_modules" "$base/kumo/package.json" "$dest/"; fi
+if [ ! -d "$dest/node_modules" ]; then mkdir -p "$dest"; cp -r node_modules package.json package-lock.json "$dest/"; fi
 rm -rf "$dest/dist" "$dest/jsx"
 cp -r dist jsx "$dest/"
-echo "deployed to $dest (windows: C:\\Users\\ran\\AppData\\Local\\ae_playground\\$name\\dist\\index.js)"
+echo "deployed to $dest (windows path: $(wslpath -w "$dest" 2>/dev/null || echo "$dest")\\dist\\index.js)"
