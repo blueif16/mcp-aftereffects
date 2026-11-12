@@ -1,3 +1,41 @@
+# mcp-aftereffects, lossless fork
+
+This fork adds the patches we use to drive After Effects from agents. Based on upstream [kumoproductions/mcp-aftereffects](https://github.com/kumoproductions/mcp-aftereffects) **v0.3.1** (commit `d0b910c`). Tested with After Effects 26.5 on Windows (agent in WSL2); macOS is untested for the patches.
+
+**What it adds over upstream**
+
+- **Lossless project round trip, footage included** (export schema 2 to 5): layer, comp, mask, keyframe, text-animator and layer-style attributes that upstream dropped; Interpret Footage settings, image sequences, placeholders; `relativeTo` on export, `baseDir` and `pathMap` on import, and a `dryRun` that lists missing footage.
+- **After Effects stays in the background:** AE-drawn dialogs (such as the disk-cache warning) are found and dismissed without taking focus; the foreground is borrowed for one call only, for layer styles.
+- **Advanced 3D:** lossless round trip of models, parametric meshes and environment lights (`light.set_source`), plus `layer.create_camera` lens and DOF, `layer.fit_model`, and fuller write errors.
+- **`layer.set_props` fails loudly:** it writes transform values and rejects unknown keys instead of silently doing nothing.
+- **Import never drops silently:** values AE cannot add are listed as `DROPPED` warnings, and `strict` fails with `PARTIAL_IMPORT`. Stroke dashes survive the round trip.
+- **Clearer timeouts:** a `TIMEOUT` hint names a finished `aerender` that never exits, and never tells you to kill it. Generated ExtendScript is ASCII-only, and `project.open` closes the old project first.
+
+Documents written by this fork (schema 5) do not load in unpatched kumo; it reads older ones best-effort. Not covered: Curves and Levels parameters, per-footage colour profile, per-character text styles, Essential Graphics.
+
+**Install** (needs Node 24+ and After Effects 2024-2026; below, `<kumo-install>` is a folder you choose on the machine that runs AE)
+
+1. Build, on any OS:
+   ```bash
+   git clone <this repo's URL> && cd mcp-aftereffects
+   npm ci && npm run build && npm test     # expect 112 live-AE tests skipped off an AE machine
+   ```
+2. Copy `dist/`, `jsx/`, `package.json` and `node_modules/` into `<kumo-install>`, a fixed folder apart from your clone. To update later, rebuild and copy `dist/` and `jsx/` again. From WSL, `scripts/deploy-windows.sh /mnt/c/Users/<you>/AppData/Local/kumo` does this.
+3. Register it with your agent, using the Node that runs on the same OS as AE.
+   - Agent on the same OS as AE: `{ "mcpServers": { "aftereffects": { "command": "node", "args": ["<kumo-install>/dist/index.js"] } } }`
+   - Agent in WSL, AE on Windows (the server and AE must share the Windows temp folder, so use Windows Node):
+     ```json
+     { "mcpServers": { "aftereffects": { "command": "bash", "args": ["-c",
+       "cd /mnt/c && exec '/mnt/c/Program Files/nodejs/node.exe' '<kumo-install-as-windows-path>\\dist\\index.js'"] } } }
+     ```
+4. In AE, tick **Preferences > Scripting & Expressions > Allow Scripts to Write Files and Access Network** (a script cannot do this for you). Then run `node <kumo-install>/dist/index.js install-agent` and restart AE. A small resident script now takes the agent's calls, so AE stays in the background.
+5. Launch AE and wait 60-90 s before the first call. From WSL, launch minimized and never pipe the output: `cmd.exe /c start "" /min "C:\Program Files\Adobe\Adobe After Effects 2026\Support Files\AfterFX.exe" </dev/null >/dev/null 2>&1 &`
+6. Smoke test on a scratch project: `ae_context` shows one live instance with `transport.mode` = `pull`; `ae_catalog {category: "light"}` lists `light.set_source` (proves the fork is live); `ae_render_frame` writes a PNG.
+
+After a redeploy, reconnect the MCP server (`/mcp` in Claude Code). If `ae_project_import_json` has no `baseDir` argument, the server is stale. A modal dialog shows as `DIALOG_OPEN`: clear it with `ae_do instance.dialogs`, then `instance.dismiss_dialog`. After a crash, answer "Crash Repair Options" with Continue (Safe Mode turns scripting off).
+
+---
+
 ![MCP for After Effects](https://raw.githubusercontent.com/kumoproductions/mcp-aftereffects/main/assets/ogp.png)
 
 # mcp-aftereffects
